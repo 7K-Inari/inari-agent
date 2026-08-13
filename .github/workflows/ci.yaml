@@ -16,10 +16,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v7
         with:
           # Pinned: the action's `latest` resolves to the v1.x line (built
           # with an older Go), which cannot parse modules targeting go1.26.3.
+          # golangci-lint v2 requires golangci-lint-action v7.
           version: v2.12.2
 
   test:
@@ -84,6 +85,8 @@ jobs:
           mv kustomize "$HOME/.local/bin/"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: helm/kind-action@v1
+        with:
+          cluster_name: inari-agent
       - name: Build and load agent image
         run: |
           # kind load copies only the named tag into the node. The install
@@ -91,7 +94,7 @@ jobs:
           # under that exact tag; imagePullPolicy is IfNotPresent in the
           # manifest so the node's local copy is used.
           docker build -t ghcr.io/7k-inari/inari-agent:latest .
-          kind load docker-image ghcr.io/7k-inari/inari-agent:latest
+          kind load docker-image --name inari-agent ghcr.io/7k-inari/inari-agent:latest
       - name: Deploy install manifest
         run: |
           make manifests
