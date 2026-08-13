@@ -1,0 +1,37 @@
+# Read-only discovery watches (plan §5.3). The catalog is a projection of
+# reality: capability sources are observed, never mutated by the agent.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: inari-agent-discovery
+  labels:
+    app.kubernetes.io/name: inari-agent
+    app.kubernetes.io/part-of: inari
+rules:
+  # CRDs (OpenAPI v3 schemas)
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  # OLM ClusterServiceVersions
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["clusterserviceversions"]
+    verbs: ["get", "list", "watch"]
+  # Crossplane XRDs, Compositions, providers
+  - apiGroups: ["apiextensions.crossplane.io"]
+    resources: ["compositeresourcedefinitions", "compositions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["pkg.crossplane.io"]
+    resources: ["providers"]
+    verbs: ["get", "list", "watch"]
+  # KRO ResourceGraphDefinitions
+  - apiGroups: ["kro.run"]
+    resources: ["resourcegraphdefinitions"]
+    verbs: ["get", "list", "watch"]
+  # Helm releases (secrets labeled owner=helm; label-selected at watch time)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # Cluster metadata
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes"]
+    verbs: ["get", "list"]

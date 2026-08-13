@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - service_account.yaml
+  - discovery_clusterrole.yaml
+  - discovery_clusterrolebinding.yaml
+  - managed_role.yaml
+  - managed_rolebinding.yaml

@@ -1,0 +1,11 @@
+# Placeholder for mutation rights (plan §5.3): the agent may only mutate
+# Inari-managed namespaces/resources. Rules are intentionally empty in M0;
+# M1 command handlers (GitOps renderer, ArgoCD proxy) will add scoped verbs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: inari-agent-managed
+  labels:
+    app.kubernetes.io/name: inari-agent
+    app.kubernetes.io/part-of: inari
+rules: []

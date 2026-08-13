@@ -10,9 +10,9 @@ import "context"
 type Source string
 
 const (
-	SourceCRD             Source = "crd"              // CRDs + OpenAPI v3 schemas
-	SourceOLM             Source = "olm"              // OLM ClusterServiceVersions
-	SourceCrossplaneXRD   Source = "crossplane-xrd"   // XRDs and Compositions
+	SourceCRD             Source = "crd"            // CRDs + OpenAPI v3 schemas
+	SourceOLM             Source = "olm"            // OLM ClusterServiceVersions
+	SourceCrossplaneXRD   Source = "crossplane-xrd" // XRDs and Compositions
 	SourceCrossplaneProv  Source = "crossplane-provider"
 	SourceHelmRelease     Source = "helm-release"
 	SourceKRORGD          Source = "kro-rgd" // KRO ResourceGraphDefinitions

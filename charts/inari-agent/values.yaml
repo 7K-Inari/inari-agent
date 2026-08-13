@@ -1,0 +1,20 @@
+namespace: inari-system
+
+image:
+  repository: ghcr.io/7k-inari/inari-agent
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicas: 1
+
+# Footprint budget (plan §5.3, §12.1/4). Enforced by CI footprint guard.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+serviceAccount:
+  name: inari-agent

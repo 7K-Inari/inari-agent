@@ -1,0 +1,29 @@
+# Read-only discovery watches (plan §5.3).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: inari-agent-discovery
+  labels:
+    {{- include "inari-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["clusterserviceversions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.crossplane.io"]
+    resources: ["compositeresourcedefinitions", "compositions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["pkg.crossplane.io"]
+    resources: ["providers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kro.run"]
+    resources: ["resourcegraphdefinitions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes"]
+    verbs: ["get", "list"]
