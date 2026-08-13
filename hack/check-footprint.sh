@@ -3,8 +3,9 @@
 #
 # Budgets:
 #   - Deployment container limits MUST NOT exceed 100m CPU / 128Mi memory.
-#   - Agent image MUST NOT exceed 50MB compressed (distroless static Go
-#     baseline is ~20-30MB; raise only with a documented reason in Makefile).
+#   - Agent image MUST NOT exceed 50MB as reported by `docker image inspect
+#     .Size` (sum of uncompressed layers; the distroless static Go baseline is
+#     ~20-30MB; raise only with a documented reason in Makefile).
 #
 # Usage:
 #   hack/check-footprint.sh [--manifest FILE] [--image IMAGE:TAG]

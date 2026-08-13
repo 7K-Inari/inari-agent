@@ -22,6 +22,7 @@ spec:
       containers:
         - name: manager
           image: controller:latest
+          imagePullPolicy: IfNotPresent
           args:
             - --health-probe-bind-address=:8081
             - --metrics-bind-address=:8080
