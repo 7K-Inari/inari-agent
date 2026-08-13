@@ -27,10 +27,10 @@ rules:
   - apiGroups: ["kro.run"]
     resources: ["resourcegraphdefinitions"]
     verbs: ["get", "list", "watch"]
-  # Helm releases (secrets labeled owner=helm; label-selected at watch time)
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
+  # Helm releases: deliberately NOT granted in M0. Release info lives in
+  # secrets (owner=helm), but RBAC cannot scope list/watch by label, so the
+  # grant would read EVERY cluster secret. The M1 Helm watcher re-evaluates
+  # this with a documented least-privilege decision.
   # Cluster metadata
   - apiGroups: [""]
     resources: ["namespaces", "nodes"]
