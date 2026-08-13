@@ -1,0 +1,83 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  IMG: ghcr.io/7k-inari/inari-agent:ci-${{ github.sha }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./... -coverprofile cover.out
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build -t "$IMG" .
+
+  footprint-guard:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: kubernetes-sigs/kustomize/action@master # renders config/default
+      - name: Render install manifest
+        run: make manifests
+      - name: Check manifest footprint
+        run: hack/check-footprint.sh --manifest dist/install.yaml
+      - name: Build image and check size
+        run: |
+          docker build -t "$IMG" .
+          hack/check-footprint.sh --image "$IMG"
+
+  kind-e2e:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: kubernetes-sigs/kustomize/action@master
+      - uses: helm/kind-action@v1
+      - name: Build and load agent image
+        run: |
+          docker build -t "$IMG" .
+          kind load docker-image "$IMG"
+      - name: Deploy install manifest
+        run: |
+          make manifests
+          kubectl apply -f dist/install.yaml
+      - name: Wait for healthy
+        run: |
+          kubectl -n inari-system rollout status deployment/inari-agent --timeout=120s
+          kubectl -n inari-system port-forward deployment/inari-agent 8081:8081 &
+          sleep 3
+          curl -sf http://localhost:8081/healthz
