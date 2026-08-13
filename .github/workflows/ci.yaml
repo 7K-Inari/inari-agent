@@ -18,7 +18,9 @@ jobs:
           go-version-file: go.mod
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          # Pinned: the action's `latest` resolves to the v1.x line (built
+          # with an older Go), which cannot parse modules targeting go1.26.3.
+          version: v2.12.2
 
   test:
     runs-on: ubuntu-latest
@@ -48,7 +50,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: kubernetes-sigs/kustomize/action@master # renders config/default
+      - name: Set up kustomize v5.4.3
+        run: |
+          curl -fsSL -o kustomize.tgz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar -xzf kustomize.tgz
+          mkdir -p "$HOME/.local/bin"
+          mv kustomize "$HOME/.local/bin/"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Render install manifest
         run: make manifests
       - name: Check manifest footprint
@@ -66,7 +75,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: kubernetes-sigs/kustomize/action@master
+      - name: Set up kustomize v5.4.3
+        run: |
+          curl -fsSL -o kustomize.tgz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar -xzf kustomize.tgz
+          mkdir -p "$HOME/.local/bin"
+          mv kustomize "$HOME/.local/bin/"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - uses: helm/kind-action@v1
       - name: Build and load agent image
         run: |
