@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 func TestAgentReconcilerStartReturnsOnCancel(t *testing.T) {
@@ -38,5 +40,30 @@ func TestAgentReconcilerDefaultInterval(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("Start with zero interval returned error: %v", err)
+	}
+}
+
+func TestNewAgentReconcilerDefaults(t *testing.T) {
+	r := NewAgentReconciler(nil)
+	if r == nil {
+		t.Fatal("NewAgentReconciler returned nil")
+	}
+	if r.Interval != defaultReconcileInterval {
+		t.Errorf("Interval = %v, want %v", r.Interval, defaultReconcileInterval)
+	}
+	if r.Registrar != nil || r.Stream != nil || r.Handler != nil || len(r.Watchers) != 0 {
+		t.Error("expected zero-value lifecycle dependencies")
+	}
+}
+
+func TestSetupWithManager(t *testing.T) {
+	r := &AgentReconciler{Log: logr.Discard(), Interval: time.Hour}
+
+	mgr, err := ctrl.NewManager(&rest.Config{Host: "https://127.0.0.1:1"}, ctrl.Options{})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := r.SetupWithManager(mgr); err != nil {
+		t.Fatalf("SetupWithManager: %v", err)
 	}
 }

@@ -28,6 +28,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./... -coverprofile cover.out
+      - run: hack/check-footprint_test.sh
 
   build:
     runs-on: ubuntu-latest

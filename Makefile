@@ -10,6 +10,10 @@ build:
 test:
 	go test ./... -coverprofile cover.out
 
+.PHONY: test-footprint
+test-footprint:
+	hack/check-footprint_test.sh
+
 .PHONY: vet
 vet:
 	go vet ./...
