@@ -1,0 +1,6 @@
+apiVersion: v2
+name: inari-agent
+description: Inari tenant-cluster agent (plan §5.3). Renders the same install manifest as config/default.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

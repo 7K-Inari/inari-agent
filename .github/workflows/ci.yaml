@@ -1,0 +1,107 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  IMG: ghcr.io/7k-inari/inari-agent:ci-${{ github.sha }}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          # Pinned: the action's `latest` resolves to the v1.x line (built
+          # with an older Go), which cannot parse modules targeting go1.26.3.
+          # golangci-lint v2 requires golangci-lint-action v7.
+          version: v2.12.2
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./... -coverprofile cover.out
+      - run: hack/check-footprint_test.sh
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build -t "$IMG" .
+
+  footprint-guard:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Set up kustomize v5.4.3
+        run: |
+          curl -fsSL -o kustomize.tgz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar -xzf kustomize.tgz
+          mkdir -p "$HOME/.local/bin"
+          mv kustomize "$HOME/.local/bin/"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Render install manifest
+        run: make manifests
+      - name: Check manifest footprint
+        run: hack/check-footprint.sh --manifest dist/install.yaml
+      - name: Build image and check size
+        run: |
+          docker build -t "$IMG" .
+          hack/check-footprint.sh --image "$IMG"
+
+  kind-e2e:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Set up kustomize v5.4.3
+        run: |
+          curl -fsSL -o kustomize.tgz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar -xzf kustomize.tgz
+          mkdir -p "$HOME/.local/bin"
+          mv kustomize "$HOME/.local/bin/"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: inari-agent
+      - name: Build and load agent image
+        run: |
+          # kind load copies only the named tag into the node. The install
+          # manifest (config/default) references :latest, so build and load
+          # under that exact tag; imagePullPolicy is IfNotPresent in the
+          # manifest so the node's local copy is used.
+          docker build -t ghcr.io/7k-inari/inari-agent:latest .
+          kind load docker-image --name inari-agent ghcr.io/7k-inari/inari-agent:latest
+      - name: Deploy install manifest
+        run: |
+          make manifests
+          kubectl apply -f dist/install.yaml
+      - name: Wait for healthy
+        run: |
+          kubectl -n inari-system rollout status deployment/inari-agent --timeout=120s
+          kubectl -n inari-system port-forward deployment/inari-agent 8081:8081 &
+          sleep 3
+          curl -sf http://localhost:8081/healthz
