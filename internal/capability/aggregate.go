@@ -50,9 +50,8 @@ func (a *Aggregator) Checksum() string {
 }
 
 // Run starts all watchers and pumps capability updates to the stream until
-// ctx is cancelled. On a resync request from the gateway it replays the
-// full snapshot with full_sync=true; the gateway dedupes by checksum
-// (at-least-once delivery, no duplicates in the catalog projection).
+// ctx is cancelled. Resync handling is driven externally via
+// ReplayFullState (the lifecycle owns the stream event channel).
 func (a *Aggregator) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -81,11 +80,6 @@ func (a *Aggregator) Run(ctx context.Context) error {
 		close(merged)
 	}()
 
-	var streamEvents <-chan *agentv1.Event
-	if a.Client != nil {
-		streamEvents = a.Client.Events()
-	}
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -97,15 +91,6 @@ func (a *Aggregator) Run(ctx context.Context) error {
 			a.apply(cap)
 			if err := a.send(ctx, []*agentv1.Capability{cap}, false); err != nil {
 				return err
-			}
-		case ev := <-streamEvents:
-			if ev == nil {
-				continue
-			}
-			if agentv1.EventTypeFromString(ev.Type) == agentv1.EventType_EVENT_TYPE_RESYNC_REQUEST {
-				if err := a.replayFullState(ctx); err != nil {
-					return err
-				}
 			}
 		}
 	}
@@ -123,8 +108,11 @@ func (a *Aggregator) apply(cap *agentv1.Capability) {
 	a.snapshot[key] = cap
 }
 
-// replayFullState re-sends the entire snapshot as a full sync.
-func (a *Aggregator) replayFullState(ctx context.Context) error {
+// ReplayFullState re-sends the entire snapshot as a full sync. Called by
+// the lifecycle when the gateway requests resync (checksum mismatch or
+// sequence gap, plan §5.2); the gateway dedupes by checksum, so replays
+// produce no duplicates in the catalog projection.
+func (a *Aggregator) ReplayFullState(ctx context.Context) error {
 	a.mu.Lock()
 	caps := make([]*agentv1.Capability, 0, len(a.snapshot))
 	for _, c := range a.snapshot {

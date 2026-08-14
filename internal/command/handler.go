@@ -1,28 +1,18 @@
-// Package command defines the contract for control-plane commands executed
-// by the agent (GitOps rendering, ArgoCD command proxy — plan §5.3).
-// Delivery is at-least-once: handlers MUST be idempotent. Mutations are
-// limited to Inari-managed namespaces/resources. Implementations land in M1.
+// Package command executes control-plane commands received on the agent
+// EventStream (plan §5.3). Delivery is at-least-once: command_id is the
+// idempotency key and handlers MUST be idempotent. Mutations are limited
+// to Inari-managed namespaces/resources; out-of-band actions fail closed
+// when the stream is disconnected.
 package command
 
-import "context"
+import (
+	"context"
 
-// Command is an idempotent unit of work from the control plane.
-type Command struct {
-	ID       string
-	TenantID string
-	Kind     string
-	Payload  []byte
-}
+	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
+)
 
-// Result reports the outcome of handling a Command.
-type Result struct {
-	CommandID string
-	Succeeded bool
-	Message   string
-}
-
-// Handler executes control-plane commands. Handle must be safe to invoke
-// multiple times with the same Command.ID.
+// Handler executes control-plane commands. HandleEvent must be safe to
+// invoke multiple times with the same command_id.
 type Handler interface {
-	Handle(ctx context.Context, cmd Command) (Result, error)
+	HandleEvent(ctx context.Context, ev *agentv1.Event) (*agentv1.CommandAck, error)
 }

@@ -108,9 +108,8 @@ func TestAggregatorReplaysFullSnapshotOnResyncWithoutDuplicates(t *testing.T) {
 
 	resyncPayload, _ := anypb.New(&agentv1.Event{})
 	_ = resyncPayload
-	client.events <- &agentv1.Event{
-		EventId: "resync-1",
-		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_RESYNC_REQUEST),
+	if err := agg.ReplayFullState(ctx); err != nil {
+		t.Fatalf("ReplayFullState: %v", err)
 	}
 	waitForSent(t, client, 3)
 
