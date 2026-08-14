@@ -18,3 +18,15 @@ resources:
 
 serviceAccount:
   name: inari-agent
+
+# Lifecycle configuration (plan §5.3). registrationToken is the one-time
+# TTL'd bootstrap token issued by the control plane; leave empty for
+# standalone mode.
+config:
+  registrationToken: ""
+  tenantID: ""
+  controlPlane: ""
+  # Comma-separated k=v labels (ClusterSet targeting).
+  clusterLabels: ""
+  # Namespaces whose Helm release Secrets are discovered (least privilege).
+  helmNamespaces: "inari-system"

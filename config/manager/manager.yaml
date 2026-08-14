@@ -26,6 +26,14 @@ spec:
           args:
             - --health-probe-bind-address=:8081
             - --metrics-bind-address=:8080
+          # Lifecycle configuration (plan §5.3). The server's
+          # install-manifest endpoint renders the inari-agent-config Secret
+          # with the one-time registration token; without it the agent runs
+          # standalone and healthy.
+          envFrom:
+            - secretRef:
+                name: inari-agent-config
+                optional: true
           ports:
             - name: health
               containerPort: 8081

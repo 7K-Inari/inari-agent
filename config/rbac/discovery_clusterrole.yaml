@@ -18,7 +18,7 @@ rules:
     verbs: ["get", "list", "watch"]
   # Crossplane XRDs, Compositions, providers
   - apiGroups: ["apiextensions.crossplane.io"]
-    resources: ["compositeresourcedefinitions", "compositions"]
+    resources: ["compositedresourcedefinitions", "compositions"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["pkg.crossplane.io"]
     resources: ["providers"]
@@ -27,11 +27,17 @@ rules:
   - apiGroups: ["kro.run"]
     resources: ["resourcegraphdefinitions"]
     verbs: ["get", "list", "watch"]
-  # Helm releases: deliberately NOT granted in M0. Release info lives in
-  # secrets (owner=helm), but RBAC cannot scope list/watch by label, so the
-  # grant would read EVERY cluster secret. The M1 Helm watcher re-evaluates
-  # this with a documented least-privilege decision.
+  # Helm releases: release metadata lives in Secrets labelled owner=helm, and
+  # RBAC cannot scope list/watch by label — a cluster-wide secrets grant
+  # would read EVERY cluster secret (dropped deliberately in M0). M1 watches
+  # Helm Secrets only in namespaces listed in INARI_HELM_NAMESPACES
+  # (default: inari-system), granted via the namespaced managed Role below.
   # Cluster metadata
   - apiGroups: [""]
     resources: ["namespaces", "nodes"]
+    verbs: ["get", "list", "watch"]
+  # Addon version discovery (kube-system and other platform deployments).
+  # Deployment specs carry no credentials.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
     verbs: ["get", "list"]

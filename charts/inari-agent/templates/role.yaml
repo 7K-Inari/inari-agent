@@ -1,5 +1,5 @@
-# Placeholder for mutation rights (plan §5.3): mutations are limited to
-# Inari-managed namespaces/resources. Intentionally empty in M0.
+# Namespaced rights in the agent's own namespace (plan §5.3): read the
+# ESO-delivered OIDC client-secret and Helm release Secrets owned by Inari.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -7,7 +7,10 @@ metadata:
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "inari-agent.labels" . | nindent 4 }}
-rules: []
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
