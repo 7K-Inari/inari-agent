@@ -55,9 +55,9 @@ func newTestRegistrar(t *testing.T, h agentv1connect.RegistrationServiceHandler)
 
 func TestRegisterExchangesTokenForCredentials(t *testing.T) {
 	h := &fakeRegistrationHandler{resp: &agentv1.RegisterClusterResponse{
-		ClusterId:      "cluster-42",
-		OidcIssuerUrl:  "https://keycloak.example/realms/inari",
-		ClientId:       "cluster-cluster-42",
+		ClusterId:     "cluster-42",
+		OidcIssuerUrl: "https://keycloak.example/realms/inari",
+		ClientId:      "cluster-cluster-42",
 		ClientSecretDelivery: &agentv1.SecretDeliveryReference{
 			EsoSecretStore:  "inari-cluster-store",
 			SecretName:      "cluster-42-oidc",
@@ -110,9 +110,9 @@ func TestKubeSecretReaderWaitsForESOSecret(t *testing.T) {
 	ref := SecretReference{Name: "cluster-42-oidc", Namespace: "inari-system", Key: "client-secret"}
 	client := fake.NewSimpleClientset()
 	reader := &KubeSecretReader{
-		Client:        client,
-		PollInterval:  10 * time.Millisecond,
-		PollTimeout:   5 * time.Second,
+		Client:       client,
+		PollInterval: 10 * time.Millisecond,
+		PollTimeout:  5 * time.Second,
 	}
 
 	// ESO materialises the Secret asynchronously.
