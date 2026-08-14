@@ -3,21 +3,33 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	"github.com/7K-Inari/inari-api/gen/go/inari/agent/v1/agentv1connect"
+
+	"github.com/7K-Inari/inari-agent/internal/capability"
 	"github.com/7K-Inari/inari-agent/internal/controller"
+	"github.com/7K-Inari/inari-agent/internal/registration"
+	"github.com/7K-Inari/inari-agent/internal/stream"
 )
 
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+
+	version = "dev" // overridden at release build time via -ldflags
 )
 
 func init() {
@@ -40,7 +52,8 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	restConfig := ctrl.GetConfigOrDie()
+	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress: metricsAddr,
@@ -54,8 +67,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := controller.NewAgentReconciler(mgr).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to set up agent reconciler")
+	reconciler, err := buildLifecycle(restConfig, mgr)
+	if err != nil {
+		setupLog.Error(err, "unable to build agent lifecycle")
+		os.Exit(1)
+	}
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to set up agent lifecycle")
 		os.Exit(1)
 	}
 
@@ -68,9 +86,91 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting inari-agent manager")
+	setupLog.Info("starting inari-agent manager", "version", version)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// buildLifecycle wires the M1 agent lifecycle from environment configuration:
+//
+//	INARI_REGISTRATION_TOKEN  one-time TTL'd bootstrap token (install manifest)
+//	INARI_TENANT_ID           owning tenant
+//	INARI_CONTROL_PLANE       Agent Gateway base URL
+//	INARI_CLUSTER_LABELS      comma-separated k=v pairs (ClusterSet targeting)
+//
+// Without INARI_REGISTRATION_TOKEN the agent runs standalone (healthy, no
+// upstream connection) until a control plane is configured.
+func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.AgentReconciler, error) {
+	r := controller.NewAgentReconciler(mgr)
+
+	token := os.Getenv("INARI_REGISTRATION_TOKEN")
+	controlPlane := os.Getenv("INARI_CONTROL_PLANE")
+	if token == "" || controlPlane == "" {
+		return r, nil // standalone mode
+	}
+
+	kubeClient, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, err
+	}
+	dynClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, err
+	}
+	serverVersion, err := kubeClient.Discovery().ServerVersion()
+	if err != nil {
+		return nil, err
+	}
+
+	r.BootstrapToken = token
+	r.Kube = kubeClient
+	r.Dynamic = dynClient
+	r.SecretReader = &registration.KubeSecretReader{Client: kubeClient}
+	r.Registrar = &registration.ConnectRegistrar{
+		Client:            agentv1connect.NewRegistrationServiceClient(stream.DefaultHTTPClient(controlPlane), controlPlane),
+		AgentVersion:      version,
+		TenantID:          os.Getenv("INARI_TENANT_ID"),
+		ControlPlane:      controlPlane,
+		ClusterLabels:     parseLabels(os.Getenv("INARI_CLUSTER_LABELS")),
+		KubernetesVersion: serverVersion.GitVersion,
+	}
+	r.NewWatchers = func(kube kubernetes.Interface, dyn dynamic.Interface) []capability.Watcher {
+		watchers := []capability.Watcher{
+			capability.NewCRDWatcher(dyn),
+			capability.NewOLMWatcher(dyn, ""),
+			capability.NewCrossplaneProviderWatcher(dyn),
+			capability.NewHelmReleaseWatcher(dyn, ""),
+			capability.NewKROWatcher(dyn),
+			&capability.MetadataWatcher{Client: kube},
+		}
+		watchers = append(watchers, capability.NewCrossplaneXRDWatcher(dyn)...)
+		return watchers
+	}
+	r.NewStreamClient = func(creds *registration.Credentials, clientSecret string, checksum func() string) stream.Client {
+		return stream.NewConnectClient(
+			creds.ControlPlane,
+			&stream.OAuth2TokenSource{
+				TokenURL:     creds.TokenURL,
+				ClientID:     creds.ClientID,
+				ClientSecret: clientSecret,
+			},
+			version,
+			creds.TenantID,
+			checksum,
+		)
+	}
+	return r, nil
+}
+
+func parseLabels(in string) map[string]string {
+	out := map[string]string{}
+	for _, pair := range strings.Split(in, ",") {
+		k, v, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if ok && k != "" {
+			out[k] = v
+		}
+	}
+	return out
 }
