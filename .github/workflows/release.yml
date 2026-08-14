@@ -1,0 +1,220 @@
+name: release
+
+# Fires on push to main. Only proceeds when the push is a release-please
+# Release PR merge (head commit "chore(main): release ..." and/or
+# .release-please-manifest.json changed). Creates the tag + GitHub Release
+# and runs publish jobs inline — tags pushed with GITHUB_TOKEN do not fire
+# tag-push triggers, so publish MUST live here (see docs/release.md).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write # cosign keyless OIDC
+
+env:
+  IMAGE: ghcr.io/7k-inari/inari-agent
+  CHART_OCI: oci://ghcr.io/7k-inari/charts
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.check.outputs.released }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect release merge
+        id: check
+        run: |
+          SUBJECT="$(git log -1 --pretty=%s)"
+          echo "head commit: $SUBJECT"
+          CHANGED="$(git diff --name-only "${{ github.event.before }}..HEAD" || true)"
+          if echo "$SUBJECT" | grep -Eq '^chore(\(main\))?: release' \
+             || echo "$CHANGED" | grep -qx '.release-please-manifest.json'; then
+            VERSION="$(jq -r '.["."]' .release-please-manifest.json)"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "release merge detected, version $VERSION"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "not a release merge; skipping"
+          fi
+
+  verify:
+    needs: detect
+    if: needs.detect.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.detect.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce semver version
+        run: |
+          echo "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' \
+            || { echo "version $VERSION is not semver (X.Y.Z)"; exit 1; }
+
+      - name: Go module path consistent with major version
+        run: |
+          MAJOR="${VERSION%%.*}"
+          MODULE=$(go mod edit -json | grep -oP '"Path":\s*"\K[^"]+')
+          if [ "$MAJOR" -ge 2 ]; then
+            case "$MODULE" in */v"$MAJOR") ;; *) echo "go.mod module $MODULE missing /v$MAJOR suffix"; exit 1;; esac
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+
+      - run: go test ./... -coverprofile cover.out
+      - run: hack/check-footprint_test.sh
+
+  tag-release:
+    needs: [detect, verify]
+    if: needs.detect.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.detect.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract changelog section
+        run: |
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md || echo "Release $VERSION" > release-notes.md
+          cat release-notes.md
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --notes-file release-notes.md
+
+  image:
+    needs: [detect, tag-release]
+    if: needs.detect.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    env:
+      TAG: v${{ needs.detect.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image tags
+        id: meta
+        run: |
+          TAGS="${IMAGE}:${TAG}"
+          # :latest only for stable releases, never pre-releases.
+          if [[ "$TAG" != *-* ]]; then
+            TAGS="${TAGS}"$'\n'"${IMAGE}:latest"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+      - name: Build and push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: VERSION=${{ env.TAG }}
+          labels: org.opencontainers.image.source=https://github.com/7K-Inari/inari-agent
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Keyless-sign image digest
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: "${IMAGE}@${{ steps.build.outputs.digest }}"
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+      - name: Attest SBOM
+        run: cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE}@${{ steps.build.outputs.digest }}"
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+
+  provenance:
+    needs: [detect, image]
+    if: needs.detect.outputs.released == 'true'
+    permissions:
+      actions: read
+      id-token: write
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ${{ env.IMAGE }}
+      digest: ${{ needs.image.outputs.digest }}
+
+  manifests:
+    needs: [detect, tag-release, image]
+    if: needs.detect.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    env:
+      TAG: v${{ needs.detect.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up kustomize v5.4.3
+        run: |
+          curl -fsSL -o kustomize.tgz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar -xzf kustomize.tgz
+          mkdir -p "$HOME/.local/bin"
+          mv kustomize "$HOME/.local/bin/"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: helm/setup-helm@v4
+      - name: Render install manifest pinned to the release image
+        run: |
+          make manifests
+          # Pin the rendered manifest to the released image tag.
+          sed -i "s|ghcr.io/7k-inari/inari-agent:latest|${IMAGE}:${TAG}|" dist/install.yaml
+          hack/check-footprint.sh --manifest dist/install.yaml
+      - name: Package and push Helm chart (OCI)
+        run: |
+          sed -i "s/^version:.*/version: ${TAG#v}/" charts/inari-agent/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${TAG}\"/" charts/inari-agent/Chart.yaml
+          helm package charts/inari-agent -d dist
+          helm registry login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
+          helm push dist/inari-agent-${TAG#v}.tgz "$CHART_OCI"
+      - name: Attach install manifest to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" dist/install.yaml --clobber

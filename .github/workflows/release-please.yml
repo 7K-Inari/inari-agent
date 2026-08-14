@@ -1,0 +1,23 @@
+name: release-please
+
+# PR-only mode: opens/updates the Release PR (version bump + CHANGELOG.md).
+# Never creates tags, GitHub Releases, or publishes anything.
+# See docs/release.md for the full release flow.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          skip-github-release: true
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
