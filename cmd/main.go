@@ -141,11 +141,15 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 			capability.NewCRDWatcher(dyn),
 			capability.NewOLMWatcher(dyn, ""),
 			capability.NewCrossplaneProviderWatcher(dyn),
-			capability.NewHelmReleaseWatcher(dyn, ""),
 			capability.NewKROWatcher(dyn),
 			&capability.MetadataWatcher{Client: kube},
 		}
 		watchers = append(watchers, capability.NewCrossplaneXRDWatcher(dyn)...)
+		// Helm release Secrets are watched per-namespace (least privilege:
+		// no cluster-wide secrets read, see config/rbac).
+		for _, ns := range parseNamespaces(os.Getenv("INARI_HELM_NAMESPACES")) {
+			watchers = append(watchers, capability.NewHelmReleaseWatcher(dyn, ns))
+		}
 		return watchers
 	}
 	r.NewStreamClient = func(creds *registration.Credentials, clientSecret string, checksum func() string) stream.Client {
@@ -171,6 +175,21 @@ func parseLabels(in string) map[string]string {
 		if ok && k != "" {
 			out[k] = v
 		}
+	}
+	return out
+}
+
+// parseNamespaces splits a comma-separated namespace list, defaulting to the
+// agent's own namespace.
+func parseNamespaces(in string) []string {
+	var out []string
+	for _, ns := range strings.Split(in, ",") {
+		if ns = strings.TrimSpace(ns); ns != "" {
+			out = append(out, ns)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"inari-system"}
 	}
 	return out
 }
