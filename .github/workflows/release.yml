@@ -142,7 +142,11 @@ jobs:
           if [[ "$TAG" != *-* ]]; then
             TAGS="${TAGS}"$'\n'"${IMAGE}:latest"
           fi
-          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            echo "$TAGS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
       - name: Build and push (multi-arch)
         id: build
         uses: docker/build-push-action@v6
