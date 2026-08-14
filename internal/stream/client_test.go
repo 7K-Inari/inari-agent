@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -267,5 +268,99 @@ func TestResyncRequiredSurfacesResyncRequestEvent(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no resync event surfaced")
+	}
+}
+
+func TestOnConnectedChangeFiresOnConnectAndPartition(t *testing.T) {
+	gw := &fakeGateway{closeFirstAfter: 100 * time.Millisecond}
+	c := newTestClient(t, gw)
+
+	type transition struct{ v bool }
+	var mu sync.Mutex
+	var transitions []bool
+	c.SetOnConnectedChange(func(v bool) {
+		mu.Lock()
+		transitions = append(transitions, v)
+		mu.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	waitFor(t, "reconnect after partition", func() bool { return gw.connectCount() >= 2 })
+	waitFor(t, "connect/disconnect/connect transitions", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(transitions) >= 3
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if !transitions[0] || transitions[1] || !transitions[2] {
+		t.Errorf("transitions = %v, want [true false true]", transitions)
+	}
+}
+
+func TestEmitBackpressuresInsteadOfDropping(t *testing.T) {
+	c := NewConnectClient("http://unused", nil, "test", "tenant", nil)
+	for i := 0; i < 64; i++ {
+		c.events <- &agentv1.Event{EventId: "noise"}
+	}
+	cmd := &agentv1.Event{EventId: "cmd-1", Type: "inari.agent.apply_bundle.v1"}
+	done := make(chan struct{})
+	go func() {
+		c.emit(context.Background(), cmd)
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("emit must backpressure when the buffer is full, not drop")
+	case <-time.After(100 * time.Millisecond):
+	}
+	for i := 0; i < 63; i++ {
+		<-c.events
+	}
+	<-c.events // drain one more, unblocking emit
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("emit did not unblock after consumer drained")
+	}
+	if ev := <-c.events; ev.EventId != "cmd-1" {
+		t.Fatalf("command event lost or reordered: got %q", ev.EventId)
+	}
+}
+
+func TestBackoffWaitsAreJittered(t *testing.T) {
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 50; i++ {
+		w := jitterDelay(2 * time.Second)
+		if w < time.Second || w > 2*time.Second {
+			t.Fatalf("jittered wait %v outside [1s,2s]", w)
+		}
+		seen[w] = true
+	}
+	if len(seen) < 10 {
+		t.Errorf("jitter produced only %d distinct waits; reconnects would synchronise", len(seen))
+	}
+}
+
+func TestOAuth2TokenSourceCachesTokens(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"tok","token_type":"Bearer","expires_in":3600}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ts := &OAuth2TokenSource{TokenURL: srv.URL, ClientID: "id", ClientSecret: "secret"}
+	for i := 0; i < 3; i++ {
+		if _, err := ts.Token(context.Background()); err != nil {
+			t.Fatalf("Token: %v", err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("token endpoint hit %d times for 3 Token() calls; want 1 (cached)", got)
 	}
 }

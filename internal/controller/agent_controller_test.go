@@ -44,10 +44,18 @@ func (f *fakeSecretReader) ReadSecret(context.Context, registration.SecretRefere
 }
 
 type fakeStreamClient struct {
-	mu        sync.Mutex
-	sent      []*agentv1.Event
-	events    chan *agentv1.Event
-	gotSecret string
+	mu           sync.Mutex
+	sent         []*agentv1.Event
+	events       chan *agentv1.Event
+	gotSecret    string
+	onConn       func(bool)
+	neverConnect bool // simulate a stream that never comes up
+}
+
+func (f *fakeStreamClient) SetOnConnectedChange(cb func(bool)) {
+	f.mu.Lock()
+	f.onConn = cb
+	f.mu.Unlock()
 }
 
 func (f *fakeStreamClient) secret() string {
@@ -57,6 +65,14 @@ func (f *fakeStreamClient) secret() string {
 }
 
 func (f *fakeStreamClient) Run(ctx context.Context) error {
+	f.mu.Lock()
+	cb := f.onConn
+	never := f.neverConnect
+	f.mu.Unlock()
+	if cb != nil && !never {
+		cb(true) // fake client is "connected" while running
+		defer cb(false)
+	}
 	<-ctx.Done()
 	return nil
 }
@@ -217,4 +233,30 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+func TestLifecycleFailsCommandsClosedUntilStreamConnects(t *testing.T) {
+	fc := &fakeStreamClient{events: make(chan *agentv1.Event, 8), neverConnect: true}
+	watcher := &fakeWatcher{ch: make(chan *agentv1.Capability)}
+	r, _ := newTestReconciler(fc, watcher)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Start(ctx) }()
+
+	payload, _ := anypb.New(&agentv1.ApplyBundle{CommandId: "cmd-down"})
+	fc.events <- &agentv1.Event{
+		EventId: "evt-cmd-down",
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_APPLY_BUNDLE),
+		Payload: payload,
+	}
+
+	waitFor(t, "command NACKed while stream down", func() bool {
+		for _, ev := range fc.sentEvents() {
+			if agentv1.EventTypeFromString(ev.Type) == agentv1.EventType_EVENT_TYPE_COMMAND_NACK {
+				return true
+			}
+		}
+		return false
+	})
 }

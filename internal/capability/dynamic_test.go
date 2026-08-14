@@ -148,3 +148,33 @@ func TestCrossplaneProviderWatcher(t *testing.T) {
 		t.Errorf("explicit adopt annotation must be honoured, got %v", cap.ManagementMode)
 	}
 }
+
+func TestIgnoreAnnotatedResourceExcludedFromInventory(t *testing.T) {
+	crd := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "apiextensions.k8s.io/v1",
+		"kind":       "CustomResourceDefinition",
+		"metadata": map[string]interface{}{
+			"name":        "secret-widgets.example.com",
+			"annotations": map[string]interface{}{ManagementAnnotation: "ignore"},
+		},
+		"spec": map[string]interface{}{
+			"group": "example.com",
+			"versions": []interface{}{
+				map[string]interface{}{"name": "v1", "served": true, "storage": true},
+			},
+		},
+	}}
+	client := fakeDynamic(t, map[schema.GroupVersionResource]string{crdGVR: "CustomResourceDefinitionList"}, crd)
+
+	w := NewCRDWatcher(client)
+	ch, err := w.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cap := recvOne(t, ch)
+	// ignore = excluded from inventory (plan §12.1/3): surfaced only as a
+	// DELETE so a resource transitioning into ignore is removed upstream.
+	if cap.Action != agentv1.CapabilityAction_CAPABILITY_ACTION_DELETE {
+		t.Errorf("ignore-classified resource must not be upserted, got action %v", cap.Action)
+	}
+}

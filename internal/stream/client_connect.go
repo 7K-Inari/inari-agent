@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"strings"
@@ -57,6 +58,10 @@ type ConnectClient struct {
 
 	mu        sync.Mutex
 	connected bool
+	// OnConnectedChange, if set, is invoked whenever the stream transitions
+	// between connected and disconnected (used to gate command handling —
+	// commands fail closed while the stream is down, plan §5.3).
+	OnConnectedChange func(connected bool)
 }
 
 // NewConnectClient builds a production client with an HTTP/2 transport that
@@ -129,10 +134,22 @@ func (c *ConnectClient) Connected() bool {
 	return c.connected
 }
 
+// SetOnConnectedChange registers the connection-transition callback.
+func (c *ConnectClient) SetOnConnectedChange(cb func(bool)) {
+	c.mu.Lock()
+	c.OnConnectedChange = cb
+	c.mu.Unlock()
+}
+
 func (c *ConnectClient) setConnected(v bool) {
 	c.mu.Lock()
+	changed := c.connected != v
 	c.connected = v
+	cb := c.OnConnectedChange
 	c.mu.Unlock()
+	if changed && cb != nil {
+		cb(v)
+	}
 }
 
 func (c *ConnectClient) lazyInit() {
@@ -165,13 +182,20 @@ func (c *ConnectClient) Run(ctx context.Context) error {
 			return nil
 		}
 		_ = err // session errors are expected on partitions; backoff and redial
+		wait := jitterDelay(delay)
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(delay):
+		case <-time.After(wait):
 		}
 		delay = nextDelay(delay, backoff)
 	}
+}
+
+// jitterDelay returns 50–100% of d (full jitter) so fleets of agents do not
+// reconnect in lockstep after a gateway outage.
+func jitterDelay(d time.Duration) time.Duration {
+	return time.Duration(float64(d) * (0.5 + rand.Float64()*0.5))
 }
 
 func nextDelay(current time.Duration, b Backoff) time.Duration {
@@ -249,7 +273,7 @@ func (c *ConnectClient) session(ctx context.Context) error {
 	c.setConnected(true)
 
 	if hsResp.ResyncRequired {
-		c.emit(&agentv1.Event{
+		c.emit(ctx, &agentv1.Event{
 			EventId: "resync-required-" + hsResp.SessionId,
 			Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_RESYNC_REQUEST),
 			Time:    timestamppb.Now(),
@@ -290,7 +314,7 @@ func (c *ConnectClient) session(ctx context.Context) error {
 					}})
 				}
 			default:
-				c.emit(resp.Event)
+				c.emit(ctx, resp.Event)
 			}
 		}
 	}()
@@ -335,13 +359,15 @@ func (c *ConnectClient) session(ctx context.Context) error {
 	}
 }
 
-// emit delivers an inbound event to consumers without blocking the recv
-// pump; a full buffer drops the event (logged by callers via gaps in the
-// sequence numbers, which trigger server-side resync).
-func (c *ConnectClient) emit(ev *agentv1.Event) {
+// emit delivers an inbound event to consumers. It blocks when the buffer is
+// full (backpressure) rather than silently dropping: inbound events include
+// commands, and a dropped command would never be acked or redelivered. If
+// the consumer stalls, the receive dead-man switch eventually fires and the
+// session reconnects.
+func (c *ConnectClient) emit(ctx context.Context, ev *agentv1.Event) {
 	select {
 	case c.events <- ev:
-	default:
+	case <-ctx.Done():
 	}
 }
 

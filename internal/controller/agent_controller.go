@@ -97,6 +97,14 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	if handler == nil {
 		handler = command.NewDispatcher()
 	}
+	// Fail closed until the stream is actually up: gate command handling on
+	// the connection state (plan §5.3).
+	if gate, ok := handler.(interface{ SetConnected(bool) }); ok {
+		gate.SetConnected(false)
+		if tracker, ok := client.(interface{ SetOnConnectedChange(func(bool)) }); ok {
+			tracker.SetOnConnectedChange(gate.SetConnected)
+		}
+	}
 
 	log.Info("agent registered and connecting",
 		"tenant", creds.TenantID, "cluster", creds.ClusterID, "controlPlane", creds.ControlPlane)

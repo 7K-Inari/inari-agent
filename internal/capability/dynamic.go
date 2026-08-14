@@ -53,6 +53,13 @@ func (w *dynamicWatcher) Start(ctx context.Context) (<-chan *agentv1.Capability,
 		if cap.ManagementMode == agentv1.ManagementMode_MANAGEMENT_MODE_UNSPECIFIED {
 			cap.ManagementMode = Classify(obj)
 		}
+		if cap.ManagementMode == agentv1.ManagementMode_MANAGEMENT_MODE_IGNORE {
+			// ignore = excluded from inventory (plan §12.1/3). Emit a DELETE
+			// instead of an UPSERT so a resource transitioning into `ignore`
+			// is removed from the catalog rather than going stale; deleting
+			// a never-published capability is a harmless no-op upstream.
+			cap.Action = agentv1.CapabilityAction_CAPABILITY_ACTION_DELETE
+		}
 		select {
 		case out <- cap:
 		case <-ctx.Done():
