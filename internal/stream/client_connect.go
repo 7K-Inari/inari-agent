@@ -217,10 +217,10 @@ func (c *ConnectClient) session(ctx context.Context) error {
 	// Handshake: first message on every (re)connect carries the last known
 	// state checksum.
 	hsPayload, err := anypb.New(&agentv1.HandshakeRequest{
-		AgentVersion:           c.AgentVersion,
-		TenantId:               c.TenantID,
-		ContractVersion:        "inari.agent.v1",
-		LastSeenStateChecksum:  checksumOf(c.Checksum),
+		AgentVersion:          c.AgentVersion,
+		TenantId:              c.TenantID,
+		ContractVersion:       "inari.agent.v1",
+		LastSeenStateChecksum: checksumOf(c.Checksum),
 	})
 	if err != nil {
 		return fmt.Errorf("stream: marshal handshake: %w", err)
