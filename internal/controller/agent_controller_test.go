@@ -55,7 +55,14 @@ type fakeStreamClient struct {
 func (f *fakeStreamClient) SetOnConnectedChange(cb func(bool)) {
 	f.mu.Lock()
 	f.onConn = cb
+	never := f.neverConnect
 	f.mu.Unlock()
+	// Report "connected" synchronously at wiring time: the controller wires
+	// the callback before starting the event loop, so this keeps tests
+	// deterministic (no connect/event race).
+	if !never {
+		cb(true)
+	}
 }
 
 func (f *fakeStreamClient) secret() string {
@@ -65,14 +72,6 @@ func (f *fakeStreamClient) secret() string {
 }
 
 func (f *fakeStreamClient) Run(ctx context.Context) error {
-	f.mu.Lock()
-	cb := f.onConn
-	never := f.neverConnect
-	f.mu.Unlock()
-	if cb != nil && !never {
-		cb(true) // fake client is "connected" while running
-		defer cb(false)
-	}
 	<-ctx.Done()
 	return nil
 }
@@ -147,9 +146,7 @@ func TestLifecycleRegistersForgetsTokenAndStreamsCapabilities(t *testing.T) {
 
 	waitFor(t, "registration", func() bool { return reg.token() == "one-time-token" })
 	waitFor(t, "token forgotten", func() bool { return r.TokenForgotten() })
-	if fc.secret() != "s3cr3t" {
-		t.Errorf("stream client built with secret %q", fc.secret())
-	}
+	waitFor(t, "stream client built with resolved secret", func() bool { return fc.secret() == "s3cr3t" })
 
 	watcher.ch <- &agentv1.Capability{
 		Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Name: "widgets.example.com", Version: "v1",

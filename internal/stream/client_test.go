@@ -275,7 +275,6 @@ func TestOnConnectedChangeFiresOnConnectAndPartition(t *testing.T) {
 	gw := &fakeGateway{closeFirstAfter: 100 * time.Millisecond}
 	c := newTestClient(t, gw)
 
-	type transition struct{ v bool }
 	var mu sync.Mutex
 	var transitions []bool
 	c.SetOnConnectedChange(func(v bool) {
