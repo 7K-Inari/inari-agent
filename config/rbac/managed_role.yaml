@@ -1,6 +1,6 @@
-# Placeholder for mutation rights (plan §5.3): the agent may only mutate
-# Inari-managed namespaces/resources. Rules are intentionally empty in M0;
-# M1 command handlers (GitOps renderer, ArgoCD proxy) will add scoped verbs.
+# Namespaced rights in the agent's own namespace (plan §5.3): read the
+# ESO-delivered OIDC client-secret and Helm release Secrets owned by Inari.
+# Broader mutation rights land with the M2 command handlers.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -8,4 +8,7 @@ metadata:
   labels:
     app.kubernetes.io/name: inari-agent
     app.kubernetes.io/part-of: inari
-rules: []
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]

@@ -26,6 +26,17 @@ spec:
           args:
             - --health-probe-bind-address=:8081
             - --metrics-bind-address=:8080
+          env:
+            - name: INARI_REGISTRATION_TOKEN
+              value: {{ .Values.config.registrationToken | quote }}
+            - name: INARI_TENANT_ID
+              value: {{ .Values.config.tenantID | quote }}
+            - name: INARI_CONTROL_PLANE
+              value: {{ .Values.config.controlPlane | quote }}
+            - name: INARI_CLUSTER_LABELS
+              value: {{ .Values.config.clusterLabels | quote }}
+            - name: INARI_HELM_NAMESPACES
+              value: {{ .Values.config.helmNamespaces | quote }}
           ports:
             - name: health
               containerPort: 8081
