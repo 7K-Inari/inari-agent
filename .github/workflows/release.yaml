@@ -44,10 +44,10 @@ jobs:
         id: meta
         run: |
           TAG="${GITHUB_REF_NAME}"
-          TAGS="type=raw,value=${TAG}"
+          TAGS="${IMAGE}:${TAG}"
           # :latest only for stable releases, never pre-releases.
           if [[ "$TAG" != *-* ]]; then
-            TAGS="${TAGS}"$'\n'"type=raw,value=latest"
+            TAGS="${TAGS}"$'\n'"${IMAGE}:latest"
           fi
           echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
       - name: Build and push (multi-arch)
