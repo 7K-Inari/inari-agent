@@ -66,7 +66,7 @@ jobs:
       - name: Go module path consistent with major version
         run: |
           MAJOR="${VERSION%%.*}"
-          MODULE=$(go mod edit -json | grep -oP '"Path":\s*"\K[^"]+')
+          MODULE=$(go mod edit -json | jq -r '.Module.Path')
           if [ "$MAJOR" -ge 2 ]; then
             case "$MODULE" in */v"$MAJOR") ;; *) echo "go.mod module $MODULE missing /v$MAJOR suffix"; exit 1;; esac
           fi
@@ -181,7 +181,8 @@ jobs:
       packages: write
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
     with:
-      image: ${{ env.IMAGE }}
+      # env context is unavailable in reusable-workflow `with:` — hardcode.
+      image: ghcr.io/7k-inari/inari-agent
       digest: ${{ needs.image.outputs.digest }}
 
   manifests:
