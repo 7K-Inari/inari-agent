@@ -32,6 +32,17 @@ func (d GitOpsDeps) resolveTarget(t *agentv1.GitTarget) (git.Target, error) {
 	return gt.Validate(d.DefaultStateRepo)
 }
 
+// validateFiles rejects file paths that could escape the target
+// directory in the state repo.
+func validateFiles(files []git.File) error {
+	for _, f := range files {
+		if err := git.ValidateFilePath(f.Path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // commit writes files per the command's commit policy and reports the
 // outcome. UNSPECIFIED defaults to direct commit (tenant policy resolved
 // upstream by the control plane).
@@ -76,6 +87,9 @@ func RenderRGDInstanceHandler(deps GitOpsDeps, getter render.RGDGetter) KindHand
 		if err != nil {
 			return agentv1.CommandResult_COMMAND_RESULT_FAILED, err.Error(), nil
 		}
+		if err := validateFiles(files); err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, err.Error(), nil
+		}
 		outcome, err := deps.commit(ctx, target, files, m.Policy, m.CommandId,
 			fmt.Sprintf("inari: render %s instance %s", m.RgdRef, m.InstanceName))
 		if err != nil {
@@ -106,6 +120,9 @@ func ApplyBundleHandler(deps GitOpsDeps, bundles render.BundleSource) KindHandle
 		}
 		files, err := bundles.Fetch(ctx, ref)
 		if err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, err.Error(), nil
+		}
+		if err := validateFiles(files); err != nil {
 			return agentv1.CommandResult_COMMAND_RESULT_FAILED, err.Error(), nil
 		}
 		outcome, err := deps.commit(ctx, target, files, m.Policy, m.CommandId, "inari: apply bundle")

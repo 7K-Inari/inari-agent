@@ -167,10 +167,16 @@ func (f *fakeGitHub) handler() http.Handler {
 	mux.HandleFunc("POST /app/installations/2/access_tokens", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"token": "inst-tok", "expires_at": time.Now().Add(time.Hour).UTC()})
 	})
-	mux.HandleFunc("GET /repos/o/r/git/ref/heads/main", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /repos/o/r/git/ref/heads/{branch...}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		_ = json.NewEncoder(w).Encode(map[string]any{"ref": "refs/heads/main", "object": map[string]any{"sha": f.refs["heads/main"], "type": "commit"}})
+		sha, ok := f.refs["heads/"+r.PathValue("branch")]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Not Found"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ref": "refs/heads/" + r.PathValue("branch"), "object": map[string]any{"sha": sha, "type": "commit"}})
 	})
 	mux.HandleFunc("GET /repos/o/r/git/commits/{sha}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -220,16 +226,60 @@ func (f *fakeGitHub) handler() http.Handler {
 		f.commits = append(f.commits, sha)
 		_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha})
 	})
-	mux.HandleFunc("PATCH /repos/o/r/git/refs/heads/main", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PATCH /repos/o/r/git/refs/heads/{branch...}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		var body struct {
 			SHA string `json:"sha"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		f.refs["heads/main"] = body.SHA
+		f.refs["heads/"+r.PathValue("branch")] = body.SHA
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]any{"ref": "refs/heads/main", "object": map[string]any{"sha": body.SHA, "type": "commit"}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ref": "refs/heads/" + r.PathValue("branch"), "object": map[string]any{"sha": body.SHA, "type": "commit"}})
+	})
+	mux.HandleFunc("POST /repos/o/r/git/refs", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		var body struct {
+			Ref string `json:"ref"`
+			SHA string `json:"sha"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		branch := strings.TrimPrefix(body.Ref, "refs/")
+		f.refs[branch] = body.SHA
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ref": body.Ref, "object": map[string]any{"sha": body.SHA, "type": "commit"}})
+	})
+	mux.HandleFunc("GET /repos/o/r/pulls", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		out := []map[string]any{}
+		head := r.URL.Query().Get("head")
+		for _, pr := range f.prs {
+			if pr["headref"] == head {
+				out = append(out, pr)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	})
+	mux.HandleFunc("POST /repos/o/r/pulls", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		var body struct {
+			Title string `json:"title"`
+			Head  string `json:"head"`
+			Base  string `json:"base"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		pr := map[string]any{
+			"html_url": "https://github.test/o/r/pull/" + f.sha(),
+			"head":     map[string]any{"ref": body.Head},
+			"base":     map[string]any{"ref": body.Base},
+			"headref":  "o:" + body.Head,
+		}
+		f.prs = append(f.prs, pr)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(pr)
 	})
 	return mux
 }
@@ -270,5 +320,49 @@ func TestGitHubProviderCommitFiles(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("empty file set must be a no-op")
+	}
+}
+
+func TestGitHubProviderOpenPR(t *testing.T) {
+	fake := newFakeGitHub()
+	srv := httptest.NewServer(fake.handler())
+	t.Cleanup(srv.Close)
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewGitHubProvider(AppCredentials{AppID: 1, InstallationID: 2, PrivateKey: key}, srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt := Target{Repo: "o/r", Branch: "main"}
+	files := []File{{Path: "apps/web/instance.yaml", Content: []byte("apiVersion: v1\n")}}
+
+	url, err := p.OpenPR(context.Background(), tgt, files, "inari/cmd-1", "title", "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(url, "https://github.test/o/r/pull/") {
+		t.Fatalf("pr url %q", url)
+	}
+	fake.mu.Lock()
+	if _, ok := fake.refs["heads/inari/cmd-1"]; !ok {
+		t.Error("topic branch not created")
+	}
+	fake.mu.Unlock()
+
+	// Re-invoking returns the existing open PR without a second create.
+	url2, err := p.OpenPR(context.Background(), tgt, files, "inari/cmd-1", "title", "body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	if len(fake.prs) != 1 {
+		t.Fatalf("expected 1 PR, got %d", len(fake.prs))
+	}
+	fake.mu.Unlock()
+	if url2 != url {
+		t.Fatalf("re-invocation returned %q, want %q", url2, url)
 	}
 }

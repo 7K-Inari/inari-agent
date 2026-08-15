@@ -63,6 +63,21 @@ func (t Target) FullPath(p string) string {
 	return strings.TrimSuffix(t.Path, "/") + "/" + p
 }
 
+// ValidateFilePath rejects absolute paths and ".." segments so rendered
+// or bundle-supplied file names cannot escape the target directory in
+// the state repository.
+func ValidateFilePath(p string) error {
+	if p == "" || strings.HasPrefix(p, "/") {
+		return fmt.Errorf("git: file path %q must be relative and non-empty", p)
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == ".." || seg == "." {
+			return fmt.Errorf("git: file path %q contains invalid segment %q", p, seg)
+		}
+	}
+	return nil
+}
+
 // Provider writes rendered manifests to a git host. Implementations must
 // be safe for concurrent use and idempotent: committing an unchanged file
 // set reports changed=false.

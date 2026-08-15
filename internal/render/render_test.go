@@ -79,6 +79,9 @@ func TestRenderRGDInstanceValidation(t *testing.T) {
 	if _, err := RenderRGDInstance(context.Background(), fakeRGDGetter{obj: testRGD()}, "r", "", "ns", nil); err == nil {
 		t.Fatal("expected instance_name error")
 	}
+	if _, err := RenderRGDInstance(context.Background(), fakeRGDGetter{obj: testRGD()}, "r", "../escape", "ns", nil); err == nil {
+		t.Fatal("expected path-escaping instance_name error")
+	}
 	if _, err := RenderRGDInstance(context.Background(), fakeRGDGetter{err: errors.New("not found")}, "r", "n", "ns", nil); err == nil {
 		t.Fatal("expected resolve error")
 	}

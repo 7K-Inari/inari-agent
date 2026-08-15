@@ -195,6 +195,28 @@ func TestApplyBundleHandler(t *testing.T) {
 	}
 }
 
+func TestApplyBundleRejectsEscapingFilePath(t *testing.T) {
+	gp := git.NewMemProvider()
+	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	bundles := &fakeBundles{files: []git.File{{Path: "../../other-instance/app.yaml", Content: []byte("x")}}}
+	h := ApplyBundleHandler(deps, bundles)
+
+	a, _ := anypb.New(&agentv1.ApplyBundle{
+		CommandId: "cmd-evil",
+		Source:    &agentv1.ApplyBundle_OciRef{OciRef: "oci://ghcr.io/inari/bundle:v1"},
+	})
+	result, msg, err := h(context.Background(), &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_APPLY_BUNDLE),
+		Payload: a,
+	})
+	if err != nil || result != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+		t.Fatalf("path traversal must fail the command, got result=%v msg=%q err=%v", result, msg, err)
+	}
+	if len(gp.Commits) != 0 {
+		t.Fatal("no commit may happen on rejection")
+	}
+}
+
 func mustStruct(t *testing.T, m map[string]interface{}) *structpb.Struct {
 	t.Helper()
 	s, err := structpb.NewStruct(m)

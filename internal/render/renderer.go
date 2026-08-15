@@ -46,6 +46,9 @@ func RenderRGDInstance(ctx context.Context, getter RGDGetter, rgdRef, instanceNa
 	if instanceName == "" {
 		return nil, fmt.Errorf("render: missing instance_name")
 	}
+	if err := git.ValidateFilePath(instanceName); err != nil {
+		return nil, fmt.Errorf("render: invalid instance_name: %w", err)
+	}
 	rgd, err := getter.GetRGD(ctx, rgdRef)
 	if err != nil {
 		return nil, fmt.Errorf("render: resolve RGD %q: %w", rgdRef, err)

@@ -116,6 +116,9 @@ func fetchOCI(ctx context.Context, ref string) ([]git.File, error) {
 		if path == "" {
 			path = fmt.Sprintf("layer-%d", i)
 		}
+		if err := git.ValidateFilePath(path); err != nil {
+			return nil, fmt.Errorf("render: OCI bundle %q layer %d: %w", ref, i, err)
+		}
 		blob, err := content.FetchAll(ctx, repo, layer)
 		if err != nil {
 			return nil, fmt.Errorf("render: fetch OCI layer %s: %w", layer.Digest, err)
