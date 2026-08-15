@@ -12,12 +12,6 @@ import (
 	"github.com/google/go-github/v68/github"
 )
 
-// GitHubClient is the subset of the go-github API the provider uses
-// (kept narrow for fakes/tests).
-type GitHubClient struct {
-	c *github.Client
-}
-
 // NewGitHubProvider returns a Provider authenticating as a GitHub App
 // installation. apiBase may be empty for github.com (tests pass an
 // httptest URL).

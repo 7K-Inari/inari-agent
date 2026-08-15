@@ -11,7 +11,7 @@ import (
 
 	"connectrpc.com/connect"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"golang.org/x/net/http2/h2c" //nolint:staticcheck // SA1019: net/http Protocols h2c hangs connect bidi streams; keep h2c until verified (test-only)
 	"google.golang.org/protobuf/types/known/anypb"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
@@ -150,7 +150,7 @@ func newTestClient(t *testing.T, gw *fakeGateway, opts ...func(*ConnectClient)) 
 	mux.Handle(agentv1connect.NewEventStreamServiceHandler(gw))
 	srv := httptest.NewUnstartedServer(mux)
 	srv.EnableHTTP2 = false // h2c: prior-knowledge HTTP/2 without TLS
-	srv.Config.Handler = h2c.NewHandler(mux, &http2.Server{})
+	srv.Config.Handler = h2c.NewHandler(mux, &http2.Server{}) //nolint:staticcheck // SA1019: see import comment
 	srv.Start()
 	t.Cleanup(srv.Close)
 

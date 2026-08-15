@@ -132,8 +132,8 @@ func ptr[T any](v T) *T { return &v }
 var GVRFor = func(gvk schema.GroupVersionKind) (schema.GroupVersionResource, error) {
 	kind := gvk.Kind
 	var resource string
-	switch {
-	case kind == "":
+	switch kind {
+	case "":
 		return schema.GroupVersionResource{}, fmt.Errorf("argocd: manifest with empty kind")
 	default:
 		// naive pluralization: lowercase + "s"/"es"/"ies"
