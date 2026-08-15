@@ -48,6 +48,9 @@ type AgentReconciler struct {
 	NewWatchers func(kube kubernetes.Interface, dyn dynamic.Interface) []capability.Watcher
 	// Handler defaults to command.NewDispatcher().
 	Handler command.Handler
+	// GitOps, when set, registers the real M2 command handlers on the
+	// dispatcher and runs the status streamer (plan §5.3 phases 4-5).
+	GitOps *GitOpsConfig
 
 	tokenMu        sync.Mutex
 	tokenForgotten atomic.Bool
@@ -109,9 +112,16 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	log.Info("agent registered and connecting",
 		"tenant", creds.TenantID, "cluster", creds.ClusterID, "controlPlane", creds.ControlPlane)
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() { errCh <- client.Run(ctx) }()
 	go func() { errCh <- aggregator.Run(ctx) }()
+	if r.GitOps != nil {
+		if err := r.GitOps.configure(ctx, handler, creds.TenantID); err != nil {
+			return fmt.Errorf("agent lifecycle: gitops setup: %w", err)
+		}
+		streamer := r.GitOps.streamer(r.Log, r.Dynamic, client)
+		go func() { errCh <- streamer.Run(ctx) }()
+	}
 
 	for {
 		select {

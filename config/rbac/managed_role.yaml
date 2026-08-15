@@ -1,6 +1,6 @@
 # Namespaced rights in the agent's own namespace (plan §5.3): read the
-# ESO-delivered OIDC client-secret and Helm release Secrets owned by Inari.
-# Broader mutation rights land with the M2 command handlers.
+# ESO-delivered OIDC client-secret, GitHub App credentials, and Helm
+# release Secrets owned by Inari; persist the command journal.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -12,3 +12,7 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch"]
+  # Command journal (durable command_id idempotency, M2).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]

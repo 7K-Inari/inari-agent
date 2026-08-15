@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/dynamic"
@@ -19,8 +23,10 @@ import (
 
 	"github.com/7K-Inari/inari-api/gen/go/inari/agent/v1/agentv1connect"
 
+	"github.com/7K-Inari/inari-agent/internal/argocd"
 	"github.com/7K-Inari/inari-agent/internal/capability"
 	"github.com/7K-Inari/inari-agent/internal/controller"
+	"github.com/7K-Inari/inari-agent/internal/git"
 	"github.com/7K-Inari/inari-agent/internal/registration"
 	"github.com/7K-Inari/inari-agent/internal/stream"
 )
@@ -165,7 +171,76 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 			checksum,
 		)
 	}
+	gitOps, err := buildGitOps(context.Background(), kubeClient, dynClient)
+	if err != nil {
+		return nil, err
+	}
+	r.GitOps = gitOps
 	return r, nil
+}
+
+// buildGitOps wires the M2 command handlers from environment configuration:
+//
+//	INARI_GIT_CREDS_SECRET   ESO-materialized GitHub App credentials Secret
+//	                         (keys app-id, installation-id, private-key)
+//	INARI_GIT_CREDS_NAMESPACE Secret namespace (default: agent namespace)
+//	INARI_STATE_REPO         override state repo (owner/name); default
+//	                         <org>/<tenant>-inari-state
+//	INARI_STATE_REPO_ORG     GitHub org for the default state repo
+//	INARI_ARGOCD_MODE        bundle (default) | byo
+//	INARI_ARGOCD_NAMESPACE   ArgoCD install namespace (default argocd)
+//	INARI_ARGOCD_API_URL     ArgoCD API base for invoke-action (default
+//	                         in-cluster service URL)
+//	INARI_ARGOCD_API_TOKEN   bearer token for invoke-action (optional)
+//
+// Without INARI_GIT_CREDS_SECRET the agent runs M1-only (commands stay
+// no-op), preserving standalone deployability.
+func buildGitOps(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Interface) (*controller.GitOpsConfig, error) {
+	credsSecret := os.Getenv("INARI_GIT_CREDS_SECRET")
+	if credsSecret == "" {
+		return nil, nil
+	}
+	credsNS := os.Getenv("INARI_GIT_CREDS_NAMESPACE")
+	if credsNS == "" {
+		credsNS = "inari-system"
+	}
+	secret, err := kube.CoreV1().Secrets(credsNS).Get(ctx, credsSecret, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("read git credentials secret %s/%s: %w", credsNS, credsSecret, err)
+	}
+	appCreds, err := git.ParseAppCredentials(secret.Data)
+	if err != nil {
+		return nil, err
+	}
+	provider, err := git.NewGitHubProvider(appCreds, os.Getenv("INARI_GIT_API_BASE"))
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := &controller.GitOpsConfig{
+		Kube:             kube,
+		Dyn:              dyn,
+		Git:              provider,
+		StateRepo:        os.Getenv("INARI_STATE_REPO"),
+		StateRepoOrg:     os.Getenv("INARI_STATE_REPO_ORG"),
+		ArgoCDMode:       argocd.Mode(os.Getenv("INARI_ARGOCD_MODE")),
+		ArgoCDNamespace:  os.Getenv("INARI_ARGOCD_NAMESPACE"),
+		JournalNamespace: credsNS,
+	}
+	argocdNS := cfg.ArgoCDNamespace
+	if argocdNS == "" {
+		argocdNS = "argocd"
+	}
+	apiURL := os.Getenv("INARI_ARGOCD_API_URL")
+	if apiURL == "" {
+		apiURL = "https://argocd-server." + argocdNS + ".svc"
+	}
+	cfg.ArgoCDAPI = &argocd.APIClient{
+		BaseURL: apiURL,
+		Token:   os.Getenv("INARI_ARGOCD_API_TOKEN"),
+		Timeout: 30 * time.Second,
+	}
+	return cfg, nil
 }
 
 func parseLabels(in string) map[string]string {
