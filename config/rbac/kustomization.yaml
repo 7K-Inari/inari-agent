@@ -7,3 +7,5 @@ resources:
   - discovery_clusterrolebinding.yaml
   - managed_role.yaml
   - managed_rolebinding.yaml
+  - gitops_clusterrole.yaml
+  - gitops_clusterrolebinding.yaml

@@ -12,7 +12,7 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -a -ldflags "-X main.version=${VERSION}" -o manager ./cmd
+    go build -a -ldflags "-s -w -X main.version=${VERSION}" -o manager ./cmd
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
