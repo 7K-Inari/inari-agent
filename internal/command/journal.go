@@ -50,6 +50,13 @@ func (j *ConfigMapJournal) Load(ctx context.Context) (map[string]*agentv1.Comman
 	return out, nil
 }
 
+// maxJournalEntries bounds the ConfigMap size (etcd objects cap at
+// ~1MiB). When the cap is exceeded, arbitrary old entries are evicted;
+// evicted command_ids re-execute on redelivery, which the idempotent
+// handlers tolerate — the alternative is every command failing once the
+// object limit is hit.
+const maxJournalEntries = 1000
+
 // Record implements Journal. Creates the ConfigMap on first use and
 // retries update conflicts.
 func (j *ConfigMapJournal) Record(ctx context.Context, ack *agentv1.CommandAck) error {
@@ -79,6 +86,14 @@ func (j *ConfigMapJournal) Record(ctx context.Context, ack *agentv1.CommandAck) 
 			cm.Data = map[string]string{}
 		}
 		cm.Data[ack.CommandId] = string(raw)
+		for id := range cm.Data {
+			if len(cm.Data) <= maxJournalEntries {
+				break
+			}
+			if id != ack.CommandId {
+				delete(cm.Data, id)
+			}
+		}
 		if _, err := cms.Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
 			if apierrors.IsConflict(err) {
 				continue

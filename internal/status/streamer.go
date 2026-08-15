@@ -81,6 +81,7 @@ func (s *Streamer) Run(ctx context.Context) error {
 		if _, err := inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
 			AddFunc:    func(obj any) { s.emit(ctx, obj) },
 			UpdateFunc: func(_, obj any) { s.emit(ctx, obj) },
+			DeleteFunc: func(obj any) { s.emitDelete(ctx, obj) },
 		}); err != nil {
 			return fmt.Errorf("status: register handler: %w", err)
 		}
@@ -102,7 +103,9 @@ func (s *Streamer) Run(ctx context.Context) error {
 	return nil
 }
 
-// emit maps one object to a StatusUpdate and sends it when changed.
+// emit maps one object to a StatusUpdate and sends it when changed. The
+// dedupe entry is updated only after a successful send so a transient
+// failure is retried on the next informer event.
 func (s *Streamer) emit(ctx context.Context, obj any) {
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
@@ -115,13 +118,51 @@ func (s *Streamer) emit(ctx context.Context, obj any) {
 		s.mu.Unlock()
 		return
 	}
-	s.lastSum[key] = sum
 	s.mu.Unlock()
 
+	if err := s.send(ctx, key, upd); err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.lastSum[key] = sum
+	s.mu.Unlock()
+}
+
+// emitDelete streams a terminal missing-status update for a removed
+// resource and prunes its dedupe entry so a later re-add re-emits.
+func (s *Streamer) emitDelete(ctx context.Context, obj any) {
+	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
+		obj = tombstone.Obj
+	}
+	u, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		return
+	}
+	key := fmt.Sprintf("%s/%s/%s/%s", u.GetKind(), u.GetNamespace(), u.GetName(), u.GetUID())
+	upd := &agentv1.StatusUpdate{
+		Resource: &agentv1.ResourceRef{
+			Kind:      u.GetKind(),
+			Name:      u.GetName(),
+			Namespace: u.GetNamespace(),
+			Uid:       string(u.GetUID()),
+		},
+		Health:     agentv1.HealthStatus_HEALTH_STATUS_MISSING,
+		Sync:       agentv1.SyncState_SYNC_STATE_UNSPECIFIED,
+		Message:    "resource deleted",
+		ObservedAt: timestamppb.Now(),
+	}
+	s.mu.Lock()
+	delete(s.lastSum, key)
+	s.mu.Unlock()
+	_ = s.send(ctx, key, upd)
+}
+
+// send marshals and sends one StatusUpdate, logging failures.
+func (s *Streamer) send(ctx context.Context, key string, upd *agentv1.StatusUpdate) error {
 	payload, err := anypb.New(upd)
 	if err != nil {
 		s.Log.Error(err, "marshal status update")
-		return
+		return err
 	}
 	ev := &agentv1.Event{
 		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_STATUS_UPDATE),
@@ -129,7 +170,9 @@ func (s *Streamer) emit(ctx context.Context, obj any) {
 	}
 	if err := s.Sender.Send(ctx, ev); err != nil {
 		s.Log.Error(err, "send status update", "resource", key)
+		return err
 	}
+	return nil
 }
 
 // mapStatus converts an Application or KRO instance into a StatusUpdate.

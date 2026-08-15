@@ -147,6 +147,10 @@ func (p *gitHubProvider) OpenPR(ctx context.Context, target Target, files []File
 	}
 	topic, _, err := p.gh.Git.GetRef(ctx, owner, repo, "heads/"+branch)
 	if err != nil {
+		var ghErr *github.ErrorResponse
+		if !errors.As(err, &ghErr) || ghErr.Response.StatusCode != http.StatusNotFound {
+			return "", fmt.Errorf("git: get topic branch %s: %w", branch, err)
+		}
 		topic, _, err = p.gh.Git.CreateRef(ctx, owner, repo, &github.Reference{
 			Ref:    github.Ptr("refs/heads/" + branch),
 			Object: &github.GitObject{SHA: baseRef.GetObject().SHA},

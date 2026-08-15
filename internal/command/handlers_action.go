@@ -18,8 +18,13 @@ import (
 type InvokeActionDeps struct {
 	API *argocd.APIClient
 	Dyn dynamic.Interface
-	// Namespace is the ArgoCD install namespace.
+	// Namespace is the ArgoCD install namespace. Ignored when
+	// ResolveNamespace is set.
 	Namespace string
+	// ResolveNamespace, when set, resolves the live ArgoCD namespace per
+	// invocation (e.g. Lifecycle.EnsureReady) so BYO-adopted installs in
+	// non-default namespaces are found.
+	ResolveNamespace func(ctx context.Context) (string, error)
 }
 
 // allowedActions is the M2 allow-list for tunneled imperative ops.
@@ -50,7 +55,15 @@ func InvokeActionHandler(deps InvokeActionDeps) KindHandler {
 
 		// Ownership scoping: refuse actions on resources Inari does not
 		// manage (brownfield observe-only, §12.1/3).
-		app, err := deps.Dyn.Resource(argocd.ApplicationGVR).Namespace(deps.Namespace).
+		ns := deps.Namespace
+		if deps.ResolveNamespace != nil {
+			resolved, err := deps.ResolveNamespace(ctx)
+			if err != nil {
+				return agentv1.CommandResult_COMMAND_RESULT_FAILED, err.Error(), nil
+			}
+			ns = resolved
+		}
+		app, err := deps.Dyn.Resource(argocd.ApplicationGVR).Namespace(ns).
 			Get(ctx, m.Resource.Name, metav1.GetOptions{})
 		if err != nil {
 			return agentv1.CommandResult_COMMAND_RESULT_FAILED,

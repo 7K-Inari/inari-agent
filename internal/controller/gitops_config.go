@@ -102,9 +102,10 @@ func (c *GitOpsConfig) configure(ctx context.Context, handler command.Handler, t
 			ns = "argocd"
 		}
 		d.Register(agentv1.EventType_EVENT_TYPE_INVOKE_ACTION, command.InvokeActionHandler(command.InvokeActionDeps{
-			API:       c.ArgoCDAPI,
-			Dyn:       c.Dyn,
-			Namespace: ns,
+			API:              c.ArgoCDAPI,
+			Dyn:              c.Dyn,
+			Namespace:        ns,
+			ResolveNamespace: lifecycle.EnsureReady,
 		}))
 	}
 	if c.JournalNamespace != "" {

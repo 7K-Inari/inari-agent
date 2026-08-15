@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -154,5 +155,54 @@ func TestStreamerKROInstanceConditions(t *testing.T) {
 	upd := lastStatus(t, sender.events[0])
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_HEALTHY || upd.Sync != agentv1.SyncState_SYNC_STATE_SYNCED {
 		t.Fatalf("kro instance %+v", upd)
+	}
+}
+
+type failOnceSender struct {
+	failed bool
+	inner  *captureSender
+}
+
+func (f *failOnceSender) Send(ctx context.Context, ev *agentv1.Event) error {
+	if !f.failed {
+		f.failed = true
+		return fmt.Errorf("transient send failure")
+	}
+	return f.inner.Send(ctx, ev)
+}
+
+func TestEmitRetriesAfterSendFailure(t *testing.T) {
+	sender := &failOnceSender{inner: &captureSender{mu: make(chan struct{}, 8)}}
+	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil)
+	obj := app("my-web", "Healthy", "Synced")
+
+	s.emit(context.Background(), obj)
+	if len(sender.inner.events) != 0 {
+		t.Fatalf("failed send must not be recorded as emitted, got %d events", len(sender.inner.events))
+	}
+	s.emit(context.Background(), obj)
+	if len(sender.inner.events) != 1 {
+		t.Fatalf("expected retry to emit, got %d events", len(sender.inner.events))
+	}
+}
+
+func TestEmitDeleteStreamsMissingAndPrunes(t *testing.T) {
+	sender := &captureSender{mu: make(chan struct{}, 8)}
+	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil)
+	obj := app("my-web", "Healthy", "Synced")
+
+	s.emit(context.Background(), obj)
+	s.emitDelete(context.Background(), obj)
+	if len(sender.events) != 2 {
+		t.Fatalf("expected create + delete events, got %d", len(sender.events))
+	}
+	upd := lastStatus(t, sender.events[1])
+	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_MISSING {
+		t.Fatalf("delete update %+v", upd)
+	}
+	// Dedupe state pruned: re-adding the same content re-emits.
+	s.emit(context.Background(), obj)
+	if len(sender.events) != 3 {
+		t.Fatalf("expected re-add to re-emit, got %d events", len(sender.events))
 	}
 }
