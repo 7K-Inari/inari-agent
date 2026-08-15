@@ -149,7 +149,7 @@ func newTestClient(t *testing.T, gw *fakeGateway, opts ...func(*ConnectClient)) 
 	mux := http.NewServeMux()
 	mux.Handle(agentv1connect.NewEventStreamServiceHandler(gw))
 	srv := httptest.NewUnstartedServer(mux)
-	srv.EnableHTTP2 = false // h2c: prior-knowledge HTTP/2 without TLS
+	srv.EnableHTTP2 = false                                   // h2c: prior-knowledge HTTP/2 without TLS
 	srv.Config.Handler = h2c.NewHandler(mux, &http2.Server{}) //nolint:staticcheck // SA1019: see import comment
 	srv.Start()
 	t.Cleanup(srv.Close)
