@@ -12,6 +12,9 @@ import (
 	"github.com/go-logr/logr"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -75,15 +78,26 @@ func NewAgentReconciler(_ manager.Manager) *AgentReconciler {
 // Start runs the lifecycle until ctx is cancelled.
 func (r *AgentReconciler) Start(ctx context.Context) error {
 	log := r.Log
-	if r.Registrar == nil || !r.hasBootstrapToken() {
-		log.Info("running standalone: no registration token or registrar configured; waiting")
-		<-ctx.Done()
-		return nil
-	}
-
-	creds, err := r.register(ctx)
+	creds, err := r.loadPersistedCredentials(ctx)
 	if err != nil {
-		return fmt.Errorf("agent lifecycle: %w", err)
+		return fmt.Errorf("agent lifecycle: load persisted credentials: %w", err)
+	}
+	if creds == nil {
+		if r.Registrar == nil || !r.hasBootstrapToken() {
+			log.Info("running standalone: no registration token or registrar configured; waiting")
+			<-ctx.Done()
+			return nil
+		}
+		creds, err = r.register(ctx)
+		if err != nil {
+			return fmt.Errorf("agent lifecycle: %w", err)
+		}
+		if err := r.persistCredentials(ctx, creds); err != nil {
+			return fmt.Errorf("agent lifecycle: persist credentials: %w", err)
+		}
+	} else {
+		log.Info("using persisted registration, skipping exchange",
+			"tenant", creds.TenantID, "cluster", creds.ClusterID)
 	}
 
 	clientSecret, err := r.SecretReader.ReadSecret(ctx, creds.SecretRef)
@@ -133,6 +147,70 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 			r.dispatch(ctx, client, aggregator, handler, ev)
 		}
 	}
+}
+
+// registrationConfigMap persists the non-secret registration output (cluster
+// identity, token URL, delivery reference) so the agent survives restarts
+// without re-consuming the one-time bootstrap token.
+const registrationConfigMap = "inari-agent-registration"
+
+// loadPersistedCredentials returns previously persisted credentials, or nil
+// when the agent has never completed registration.
+func (r *AgentReconciler) loadPersistedCredentials(ctx context.Context) (*registration.Credentials, error) {
+	if r.Kube == nil {
+		return nil, nil
+	}
+	cm, err := r.Kube.CoreV1().ConfigMaps("inari-system").Get(ctx, registrationConfigMap, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	d := cm.Data
+	creds := &registration.Credentials{
+		TenantID:     d["tenant-id"],
+		ClusterID:    d["cluster-id"],
+		ClientID:     d["client-id"],
+		TokenURL:     d["token-url"],
+		ControlPlane: d["control-plane"],
+		SecretRef: registration.SecretReference{
+			Store:     d["secret-store"],
+			Name:      d["secret-name"],
+			Namespace: d["secret-namespace"],
+			Key:       d["secret-key"],
+		},
+	}
+	if creds.ClusterID == "" || creds.ClientID == "" || creds.TokenURL == "" {
+		return nil, nil
+	}
+	return creds, nil
+}
+
+// persistCredentials stores the registration output for future restarts.
+func (r *AgentReconciler) persistCredentials(ctx context.Context, creds *registration.Credentials) error {
+	if r.Kube == nil {
+		return nil
+	}
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: registrationConfigMap, Namespace: "inari-system"},
+		Data: map[string]string{
+			"tenant-id":        creds.TenantID,
+			"cluster-id":       creds.ClusterID,
+			"client-id":        creds.ClientID,
+			"token-url":        creds.TokenURL,
+			"control-plane":    creds.ControlPlane,
+			"secret-store":     creds.SecretRef.Store,
+			"secret-name":      creds.SecretRef.Name,
+			"secret-namespace": creds.SecretRef.Namespace,
+			"secret-key":       creds.SecretRef.Key,
+		},
+	}
+	_, err := r.Kube.CoreV1().ConfigMaps("inari-system").Create(ctx, cm, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return err
 }
 
 // register exchanges the bootstrap token and forgets it.
