@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -51,6 +52,10 @@ type ConnectClient struct {
 
 	Backoff        Backoff
 	ReceiveTimeout time.Duration // reconnect when no inbound traffic for this long (keepalive dead-man switch)
+
+	// Logger receives session errors (otherwise silent by design: partitions
+	// are expected). Defaults to slog.Default().
+	Logger *slog.Logger
 
 	events chan *agentv1.Event
 	sendCh chan *agentv1.Event
@@ -181,7 +186,13 @@ func (c *ConnectClient) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		_ = err // session errors are expected on partitions; backoff and redial
+		if err != nil {
+			log := c.Logger
+			if log == nil {
+				log = slog.Default()
+			}
+			log.Warn("stream session ended, backing off", "error", err, "retryIn", delay.String())
+		}
 		wait := jitterDelay(delay)
 		select {
 		case <-ctx.Done():
