@@ -36,6 +36,42 @@ jobs:
           manifest-file: .release-please-manifest.json
           skip-github-pull-request: true
 
+  verify:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce semver version
+        run: |
+          echo "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' \
+            || { echo "version $VERSION is not semver (X.Y.Z)"; exit 1; }
+
+      - name: Go module path consistent with major version
+        run: |
+          MAJOR="${VERSION%%.*}"
+          MODULE=$(go mod edit -json | jq -r '.Module.Path')
+          if [ "$MAJOR" -ge 2 ]; then
+            case "$MODULE" in */v"$MAJOR") ;; *) echo "go.mod module $MODULE missing /v$MAJOR suffix"; exit 1;; esac
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+
+      - run: go test ./... -coverprofile cover.out
+      - run: hack/check-footprint_test.sh
+
+
   image:
     needs: [release, verify]
     if: needs.release.outputs.released == 'true'
