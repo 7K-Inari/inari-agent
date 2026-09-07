@@ -5,7 +5,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/metadata"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 )
@@ -14,12 +14,13 @@ var secretsGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource:
 
 // NewHelmReleaseWatcher discovers Helm releases via their storage Secrets
 // (label owner=helm). Only release metadata from labels is read — chart
-// blobs are never decoded (footprint budget, plan §12.1/4).
-func NewHelmReleaseWatcher(client dynamic.Interface, namespace string) Watcher {
-	return &dynamicWatcher{
+// blobs are never decoded, and with the metadata-only informer they are
+// never cached either (footprint budget, plan §12.1/4).
+func NewHelmReleaseWatcher(meta metadata.Interface, namespace string) Watcher {
+	return &metadataWatcher{
 		source:    SourceHelmRelease,
 		kind:      agentv1.CapabilityKind_CAPABILITY_KIND_HELM_RELEASE,
-		client:    client,
+		meta:      meta,
 		gvr:       secretsGVR,
 		namespace: namespace,
 		selector:  "owner=helm",

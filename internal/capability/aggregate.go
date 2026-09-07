@@ -3,6 +3,7 @@ package capability
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"google.golang.org/protobuf/types/known/anypb"
@@ -96,13 +97,24 @@ func (a *Aggregator) Run(ctx context.Context) error {
 	}
 }
 
-// apply updates the snapshot (upsert or delete).
+// apply updates the snapshot (upsert or delete). A DELETE with an empty
+// Group (metadata-only delete event, where the spec is already gone)
+// matches by kind+name.
 func (a *Aggregator) apply(cap *agentv1.Capability) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	key := capabilityKey(cap)
 	if cap.Action == agentv1.CapabilityAction_CAPABILITY_ACTION_DELETE {
 		delete(a.snapshot, key)
+		if cap.Group == "" {
+			prefix := cap.Kind.String() + "/"
+			suffix := "/" + cap.Name + "/"
+			for k := range a.snapshot {
+				if strings.HasPrefix(k, prefix) && strings.Contains(k, suffix) {
+					delete(a.snapshot, k)
+				}
+			}
+		}
 		return
 	}
 	a.snapshot[key] = cap

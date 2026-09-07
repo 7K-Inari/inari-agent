@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 
@@ -112,7 +113,7 @@ func newTestReconciler(fc *fakeStreamClient, watcher *fakeWatcher) (*AgentReconc
 			fc.mu.Unlock()
 			return fc
 		},
-		NewWatchers: func(kubernetes.Interface, dynamic.Interface) []capability.Watcher {
+		NewWatchers: func(kubernetes.Interface, dynamic.Interface, metadata.Interface) []capability.Watcher {
 			return []capability.Watcher{watcher}
 		},
 	}

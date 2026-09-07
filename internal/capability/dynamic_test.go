@@ -5,10 +5,13 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/metadata"
+	metadatafake "k8s.io/client-go/metadata/fake"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 )
@@ -17,6 +20,32 @@ func fakeDynamic(t *testing.T, listKinds map[schema.GroupVersionResource]string,
 	t.Helper()
 	scheme := runtime.NewScheme()
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds, objs...)
+}
+
+func fakeMetadata(t *testing.T, objs ...runtime.Object) metadata.Interface {
+	t.Helper()
+	// The metadata fake serves PartialObjectMetadata lists; convert
+	// unstructured fixtures to their metadata projection.
+	scheme := runtime.NewScheme()
+	pms := make([]runtime.Object, 0, len(objs))
+	for _, o := range objs {
+		u, ok := o.(*unstructured.Unstructured)
+		if !ok {
+			t.Fatalf("fakeMetadata: unsupported object %T", o)
+		}
+		gvk := u.GroupVersionKind()
+		scheme.AddKnownTypeWithName(gvk, &metav1.PartialObjectMetadata{})
+		scheme.AddKnownTypeWithName(gvk.GroupVersion().WithKind(gvk.Kind+"List"), &metav1.PartialObjectMetadataList{})
+		pm := &metav1.PartialObjectMetadata{
+			TypeMeta: metav1.TypeMeta{APIVersion: u.GetAPIVersion(), Kind: u.GetKind()},
+		}
+		pm.SetName(u.GetName())
+		pm.SetNamespace(u.GetNamespace())
+		pm.SetLabels(u.GetLabels())
+		pm.SetAnnotations(u.GetAnnotations())
+		pms = append(pms, pm)
+	}
+	return metadatafake.NewSimpleMetadataClient(scheme, pms...)
 }
 
 func recvOne(t *testing.T, ch <-chan *agentv1.Capability) *agentv1.Capability {
@@ -59,7 +88,7 @@ func TestCRDWatcherEmitsSchemaWithCELValidations(t *testing.T) {
 	}}
 	client := fakeDynamic(t, map[schema.GroupVersionResource]string{crdGVR: "CustomResourceDefinitionList"}, crd)
 
-	w := NewCRDWatcher(client)
+	w := NewCRDWatcher(client, fakeMetadata(t, crd))
 	ch, err := w.Start(context.Background())
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -103,9 +132,7 @@ func TestHelmWatcherReadsReleaseLabelsOnly(t *testing.T) {
 		"kind":       "Secret",
 		"metadata":   map[string]interface{}{"name": "plain", "namespace": "apps"},
 	}}
-	client := fakeDynamic(t, map[schema.GroupVersionResource]string{secretsGVR: "SecretList"}, secret, other)
-
-	w := NewHelmReleaseWatcher(client, "")
+	w := NewHelmReleaseWatcher(fakeMetadata(t, secret, other), "")
 	ch, err := w.Start(context.Background())
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -166,7 +193,7 @@ func TestIgnoreAnnotatedResourceExcludedFromInventory(t *testing.T) {
 	}}
 	client := fakeDynamic(t, map[schema.GroupVersionResource]string{crdGVR: "CustomResourceDefinitionList"}, crd)
 
-	w := NewCRDWatcher(client)
+	w := NewCRDWatcher(client, fakeMetadata(t, crd))
 	ch, err := w.Start(context.Background())
 	if err != nil {
 		t.Fatalf("Start: %v", err)

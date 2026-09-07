@@ -33,6 +33,36 @@ type dynamicWatcher struct {
 
 func (w *dynamicWatcher) Source() Source { return w.source }
 
+// GVR exposes the watched resource for discovery-based availability
+// filtering (see FilterAvailable).
+func (w *dynamicWatcher) GVR() schema.GroupVersionResource { return w.gvr }
+
+// emitCapability maps a watched object to a Capability, applies the
+// brownfield management classification, and sends it unless the watcher is
+// shutting down. Shared by the full-object and metadata-only informer loops.
+func emitCapability(ctx context.Context, out chan<- *agentv1.Capability, kind agentv1.CapabilityKind, mapFn mapFunc, obj *unstructured.Unstructured, action agentv1.CapabilityAction) {
+	cap, err := mapFn(obj)
+	if err != nil || cap == nil {
+		return
+	}
+	cap.Kind = kind
+	cap.Action = action
+	if cap.ManagementMode == agentv1.ManagementMode_MANAGEMENT_MODE_UNSPECIFIED {
+		cap.ManagementMode = Classify(obj)
+	}
+	if cap.ManagementMode == agentv1.ManagementMode_MANAGEMENT_MODE_IGNORE {
+		// ignore = excluded from inventory (plan §12.1/3). Emit a DELETE
+		// instead of an UPSERT so a resource transitioning into `ignore`
+		// is removed from the catalog rather than going stale; deleting
+		// a never-published capability is a harmless no-op upstream.
+		cap.Action = agentv1.CapabilityAction_CAPABILITY_ACTION_DELETE
+	}
+	select {
+	case out <- cap:
+	case <-ctx.Done():
+	}
+}
+
 func (w *dynamicWatcher) Start(ctx context.Context) (<-chan *agentv1.Capability, error) {
 	out := make(chan *agentv1.Capability, 32)
 	tweak := func(opts *metav1.ListOptions) {
@@ -44,26 +74,7 @@ func (w *dynamicWatcher) Start(ctx context.Context) (<-chan *agentv1.Capability,
 	informer := factory.ForResource(w.gvr).Informer()
 
 	emit := func(obj *unstructured.Unstructured, action agentv1.CapabilityAction) {
-		cap, err := w.mapFn(obj)
-		if err != nil || cap == nil {
-			return
-		}
-		cap.Kind = w.kind
-		cap.Action = action
-		if cap.ManagementMode == agentv1.ManagementMode_MANAGEMENT_MODE_UNSPECIFIED {
-			cap.ManagementMode = Classify(obj)
-		}
-		if cap.ManagementMode == agentv1.ManagementMode_MANAGEMENT_MODE_IGNORE {
-			// ignore = excluded from inventory (plan §12.1/3). Emit a DELETE
-			// instead of an UPSERT so a resource transitioning into `ignore`
-			// is removed from the catalog rather than going stale; deleting
-			// a never-published capability is a harmless no-op upstream.
-			cap.Action = agentv1.CapabilityAction_CAPABILITY_ACTION_DELETE
-		}
-		select {
-		case out <- cap:
-		case <-ctx.Done():
-		}
+		emitCapability(ctx, out, w.kind, w.mapFn, obj, action)
 	}
 
 	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
