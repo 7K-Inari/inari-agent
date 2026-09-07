@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -125,6 +126,10 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 	if err != nil {
 		return nil, err
 	}
+	metaClient, err := metadata.NewForConfig(restConfig)
+	if err != nil {
+		return nil, err
+	}
 	serverVersion, err := kubeClient.Discovery().ServerVersion()
 	if err != nil {
 		return nil, err
@@ -133,6 +138,7 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 	r.BootstrapToken = token
 	r.Kube = kubeClient
 	r.Dynamic = dynClient
+	r.Meta = metaClient
 	r.SecretReader = &registration.KubeSecretReader{Client: kubeClient}
 	r.Registrar = &registration.ConnectRegistrar{
 		Client:            agentv1connect.NewRegistrationServiceClient(stream.DefaultHTTPClient(controlPlane), controlPlane),
@@ -142,9 +148,9 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 		ClusterLabels:     parseLabels(os.Getenv("INARI_CLUSTER_LABELS")),
 		KubernetesVersion: serverVersion.GitVersion,
 	}
-	r.NewWatchers = func(kube kubernetes.Interface, dyn dynamic.Interface) []capability.Watcher {
+	r.NewWatchers = func(kube kubernetes.Interface, dyn dynamic.Interface, meta metadata.Interface) []capability.Watcher {
 		watchers := []capability.Watcher{
-			capability.NewCRDWatcher(dyn),
+			capability.NewCRDWatcher(dyn, meta),
 			capability.NewOLMWatcher(dyn, ""),
 			capability.NewCrossplaneProviderWatcher(dyn),
 			capability.NewKROWatcher(dyn),
@@ -154,9 +160,11 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 		// Helm release Secrets are watched per-namespace (least privilege:
 		// no cluster-wide secrets read, see config/rbac).
 		for _, ns := range parseNamespaces(os.Getenv("INARI_HELM_NAMESPACES")) {
-			watchers = append(watchers, capability.NewHelmReleaseWatcher(dyn, ns))
+			watchers = append(watchers, capability.NewHelmReleaseWatcher(meta, ns))
 		}
-		return watchers
+		// Skip watchers for optional platforms absent from this cluster
+		// (OLM, Crossplane, KRO) instead of hot-looping reflector errors.
+		return capability.FilterAvailable(kube.Discovery(), ctrl.Log.WithName("capability"), watchers)
 	}
 	r.NewStreamClient = func(creds *registration.Credentials, clientSecret string, checksum func() string) stream.Client {
 		return stream.NewConnectClient(

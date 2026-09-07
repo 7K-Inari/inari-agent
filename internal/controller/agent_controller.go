@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
@@ -43,12 +44,13 @@ type AgentReconciler struct {
 
 	Kube    kubernetes.Interface
 	Dynamic dynamic.Interface
+	Meta    metadata.Interface
 
 	// NewStreamClient builds the stream client for registered credentials.
 	// The checksum function is the aggregator's live state checksum.
 	NewStreamClient func(creds *registration.Credentials, clientSecret string, checksum func() string) stream.Client
 	// NewWatchers builds the capability watchers.
-	NewWatchers func(kube kubernetes.Interface, dyn dynamic.Interface) []capability.Watcher
+	NewWatchers func(kube kubernetes.Interface, dyn dynamic.Interface, meta metadata.Interface) []capability.Watcher
 	// Handler defaults to command.NewDispatcher().
 	Handler command.Handler
 	// GitOps, when set, registers the real M2 command handlers on the
@@ -105,7 +107,7 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 		return fmt.Errorf("agent lifecycle: read client secret: %w", err)
 	}
 
-	watchers := r.NewWatchers(r.Kube, r.Dynamic)
+	watchers := r.NewWatchers(r.Kube, r.Dynamic, r.Meta)
 	aggregator := capability.NewAggregator(creds.TenantID, creds.ClusterID, nil, watchers)
 	client := r.NewStreamClient(creds, clientSecret, aggregator.Checksum)
 	aggregator.Client = client
