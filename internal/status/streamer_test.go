@@ -68,7 +68,6 @@ func keycloakRealm(name string, conditions ...interface{}) *unstructured.Unstruc
 	}}
 }
 
-var keycloakRealmGVR = schema.GroupVersionResource{Group: "platform.inari.io", Version: "v1alpha1", Resource: "keycloakrealms"}
 
 func newDyn(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	listKinds := map[schema.GroupVersionResource]string{
