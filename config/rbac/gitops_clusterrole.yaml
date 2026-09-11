@@ -37,3 +37,9 @@ rules:
   - apiGroups: ["kro.run"]
     resources: ["*"]
     verbs: ["get", "list", "watch"]
+  # Platform-cluster CRDs reconciled by inari-operator (status streamer,
+  # M3/M7): condition status is streamed upstream with the
+  # ".platform.inari.io" kind suffix.
+  - apiGroups: ["platform.inari.io"]
+    resources: ["keycloakrealms", "keycloakclients", "dnszones", "dnsrecords", "tenantnamespaces"]
+    verbs: ["get", "list", "watch"]
