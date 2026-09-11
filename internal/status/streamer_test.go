@@ -79,7 +79,6 @@ func newDyn(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	for _, gvr := range PlatformGVRs {
 		listKinds[gvr] = gvr.Resource + "List"
 	}
-	listKinds[keycloakRealmGVR] = "KeycloakRealmList"
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
 }
 
