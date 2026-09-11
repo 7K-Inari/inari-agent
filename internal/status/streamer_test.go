@@ -59,11 +59,27 @@ func kroInstance(name string, ready string) *unstructured.Unstructured {
 
 var webServiceGVR = schema.GroupVersionResource{Group: "inari.dev", Version: "v1alpha1", Resource: "webservices"}
 
+func keycloakRealm(name string, conditions ...interface{}) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "platform.inari.io/v1alpha1",
+		"kind":       "KeycloakRealm",
+		"metadata":   map[string]interface{}{"name": name, "namespace": "tenant-acme", "uid": "uid-" + name},
+		"status":     map[string]interface{}{"conditions": conditions},
+	}}
+}
+
+var keycloakRealmGVR = schema.GroupVersionResource{Group: "platform.inari.io", Version: "v1alpha1", Resource: "keycloakrealms"}
+
 func newDyn(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	listKinds := map[schema.GroupVersionResource]string{
 		argocd.ApplicationGVR: "ApplicationList",
 		webServiceGVR:         "WebServiceList",
 	}
+	// The fake client only needs a unique registered list kind per GVR.
+	for _, gvr := range PlatformGVRs {
+		listKinds[gvr] = gvr.Resource + "List"
+	}
+	listKinds[keycloakRealmGVR] = "KeycloakRealmList"
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
 }
 
@@ -155,6 +171,50 @@ func TestStreamerKROInstanceConditions(t *testing.T) {
 	upd := lastStatus(t, sender.events[0])
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_HEALTHY || upd.Sync != agentv1.SyncState_SYNC_STATE_SYNCED {
 		t.Fatalf("kro instance %+v", upd)
+	}
+}
+
+func TestStreamerPlatformFailedCondition(t *testing.T) {
+	sender := &captureSender{mu: make(chan struct{}, 8)}
+	dyn := newDyn(keycloakRealm("acme", map[string]interface{}{"type": "Failed", "status": "True", "message": "realm error"}))
+	startStreamer(t, dyn, sender)
+
+	select {
+	case <-sender.mu:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no event")
+	}
+	upd := lastStatus(t, sender.events[0])
+	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_DEGRADED {
+		t.Fatalf("platform update %+v", upd)
+	}
+	if upd.Resource.Kind != "KeycloakRealm.platform.inari.io" {
+		t.Fatalf("kind %q", upd.Resource.Kind)
+	}
+	if upd.Resource.Name != "acme" || upd.Resource.Namespace != "tenant-acme" || upd.Resource.Uid != "uid-acme" {
+		t.Fatalf("ref %+v", upd.Resource)
+	}
+	if upd.Message != "realm error" {
+		t.Fatalf("message %q", upd.Message)
+	}
+}
+
+func TestEmitDeletePlatformKindSuffix(t *testing.T) {
+	sender := &captureSender{mu: make(chan struct{}, 8)}
+	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil)
+	obj := keycloakRealm("acme", map[string]interface{}{"type": "Ready", "status": "True"})
+
+	s.emit(context.Background(), obj)
+	s.emitDelete(context.Background(), obj)
+	if len(sender.events) != 2 {
+		t.Fatalf("expected create + delete events, got %d", len(sender.events))
+	}
+	upd := lastStatus(t, sender.events[1])
+	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_MISSING {
+		t.Fatalf("delete update %+v", upd)
+	}
+	if upd.Resource.Kind != "KeycloakRealm.platform.inari.io" {
+		t.Fatalf("delete kind %q", upd.Resource.Kind)
 	}
 }
 

@@ -21,6 +21,11 @@ rules:
   - apiGroups: ["kro.run"]
     resources: ["resourcegraphdefinitions"]
     verbs: ["get", "list", "watch"]
+  # Platform-cluster CRDs reconciled by inari-operator (status streamer,
+  # M3/M7): read-only condition watch.
+  - apiGroups: ["platform.inari.io"]
+    resources: ["keycloakrealms", "keycloakclients", "dnszones", "dnsrecords", "tenantnamespaces"]
+    verbs: ["get", "list", "watch"]
   # Helm releases: watched only in namespaces listed in
   # INARI_HELM_NAMESPACES (no cluster-wide secrets read — least privilege).
   - apiGroups: [""]

@@ -1,8 +1,9 @@
-// Package status streams Application health/sync and KRO instance status
-// upstream as status-update events (plan §5.3 phase 5): near-real-time
-// inventory without the control plane ever polling tenant APIs. Watches
-// are scoped to the ArgoCD namespace and Inari-managed KRO instance GVRs
-// to respect the agent's footprint budget (§12.1/4).
+// Package status streams Application health/sync, KRO instance status, and
+// platform.inari.io CRD status upstream as status-update events (plan §5.3
+// phase 5): near-real-time inventory without the control plane ever polling
+// tenant APIs. Watches are scoped to the ArgoCD namespace, Inari-managed
+// KRO instance GVRs, and the platform CRDs to respect the agent's footprint
+// budget (§12.1/4).
 package status
 
 import (
@@ -76,6 +77,10 @@ func (s *Streamer) Run(ctx context.Context) error {
 		inf := clusterFactory.ForResource(gvr).Informer()
 		stops = append(stops, inf)
 	}
+	for _, gvr := range PlatformGVRs {
+		inf := clusterFactory.ForResource(gvr).Informer()
+		stops = append(stops, inf)
+	}
 
 	for _, inf := range stops {
 		if _, err := inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -111,7 +116,7 @@ func (s *Streamer) emit(ctx context.Context, obj any) {
 	if !ok {
 		return
 	}
-	upd, key := mapStatus(u)
+	upd, key := mapFor(u)
 	sum := checksum(upd)
 	s.mu.Lock()
 	if s.lastSum[key] == sum {
@@ -138,10 +143,14 @@ func (s *Streamer) emitDelete(ctx context.Context, obj any) {
 	if !ok {
 		return
 	}
-	key := fmt.Sprintf("%s/%s/%s/%s", u.GetKind(), u.GetNamespace(), u.GetName(), u.GetUID())
+	kind := u.GetKind()
+	if isPlatformGroup(u) {
+		kind = platformKind(u)
+	}
+	key := fmt.Sprintf("%s/%s/%s/%s", kind, u.GetNamespace(), u.GetName(), u.GetUID())
 	upd := &agentv1.StatusUpdate{
 		Resource: &agentv1.ResourceRef{
-			Kind:      u.GetKind(),
+			Kind:      kind,
 			Name:      u.GetName(),
 			Namespace: u.GetNamespace(),
 			Uid:       string(u.GetUID()),
@@ -173,6 +182,15 @@ func (s *Streamer) send(ctx context.Context, key string, upd *agentv1.StatusUpda
 		return err
 	}
 	return nil
+}
+
+// mapFor routes platform.inari.io objects to the platform condition mapper
+// and everything else to the Application/KRO mapper.
+func mapFor(u *unstructured.Unstructured) (*agentv1.StatusUpdate, string) {
+	if isPlatformGroup(u) {
+		return mapPlatformStatus(u)
+	}
+	return mapStatus(u)
 }
 
 // mapStatus converts an Application or KRO instance into a StatusUpdate.
