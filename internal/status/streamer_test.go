@@ -68,7 +68,6 @@ func keycloakRealm(name string, conditions ...interface{}) *unstructured.Unstruc
 	}}
 }
 
-
 func newDyn(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	listKinds := map[schema.GroupVersionResource]string{
 		argocd.ApplicationGVR: "ApplicationList",
