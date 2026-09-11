@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/7K-Inari/inari-agent/compare/v0.3.0...v0.4.0) (2026-09-11)
+
+
+### Features
+
+* **status:** stream platform.inari.io CRD conditions as status updates ([#16](https://github.com/7K-Inari/inari-agent/issues/16)) ([1b85746](https://github.com/7K-Inari/inari-agent/commit/1b857468f8862d8b6e07326c9723403896f479f4))
+
+
+### Performance Improvements
+
+* **capability:** metadata-only informers and discovery skip for absent APIs ([#14](https://github.com/7K-Inari/inari-agent/issues/14)) ([e319428](https://github.com/7K-Inari/inari-agent/commit/e3194281246e007150967b5238ec10068f4db52b))
+
 ## [0.3.0](https://github.com/7K-Inari/inari-agent/compare/v0.2.0...v0.3.0) (2026-08-21)
 
 
