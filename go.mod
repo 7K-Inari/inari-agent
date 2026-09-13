@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	connectrpc.com/connect v1.20.0
-	github.com/7K-Inari/inari-api v0.0.0-20260814155451-44002b549ee0
+	github.com/7K-Inari/inari-api v0.5.3-0.20260913172954-ba72515bce86
 	github.com/go-git/go-billy/v5 v5.9.1
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-logr/logr v1.4.4
@@ -92,5 +92,3 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.3 // indirect
 )
-
-replace github.com/7K-Inari/inari-api => ../inari-api
