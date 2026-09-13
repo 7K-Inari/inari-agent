@@ -54,6 +54,14 @@ type PRRecord struct {
 // NewMemProvider returns an empty in-memory fake.
 func NewMemProvider() *MemProvider { return &MemProvider{present: map[string]bool{}} }
 
+// ensurePresent lazily initializes the presence map so a zero-value
+// MemProvider is safe to use (callers hold m.mu).
+func (m *MemProvider) ensurePresent() {
+	if m.present == nil {
+		m.present = map[string]bool{}
+	}
+}
+
 // CommitFiles implements Provider.
 func (m *MemProvider) CommitFiles(_ context.Context, target Target, files []File, message string) (string, bool, error) {
 	m.mu.Lock()
@@ -69,6 +77,7 @@ func (m *MemProvider) CommitFiles(_ context.Context, target Target, files []File
 		changed = false
 	}
 	m.Commits = append(m.Commits, CommitRecord{Target: target, Files: files, Message: message, SHA: sum, Changed: changed})
+	m.ensurePresent()
 	for _, f := range files {
 		m.present[target.FullPath(f.Path)] = true
 	}
@@ -85,6 +94,7 @@ func (m *MemProvider) DeleteFiles(_ context.Context, target Target, paths []stri
 		return "", false, err
 	}
 	changed := false
+	m.ensurePresent()
 	for _, p := range paths {
 		if m.present[target.FullPath(p)] {
 			changed = true
