@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -14,8 +15,21 @@ type MemProvider struct {
 	mu      sync.Mutex
 	Commits []CommitRecord
 	PRs     []PRRecord
+	Deletes []DeleteRecord
+	// present tracks repo state (full path -> committed) so deletes are
+	// idempotent like the real provider.
+	present map[string]bool
 	// Err forces the next call to fail (then clears).
 	Err error
+}
+
+// DeleteRecord captures a DeleteFiles invocation.
+type DeleteRecord struct {
+	Target  Target
+	Paths   []string
+	Message string
+	SHA     string
+	Changed bool
 }
 
 // CommitRecord captures a CommitFiles invocation.
@@ -38,7 +52,7 @@ type PRRecord struct {
 }
 
 // NewMemProvider returns an empty in-memory fake.
-func NewMemProvider() *MemProvider { return &MemProvider{} }
+func NewMemProvider() *MemProvider { return &MemProvider{present: map[string]bool{}} }
 
 // CommitFiles implements Provider.
 func (m *MemProvider) CommitFiles(_ context.Context, target Target, files []File, message string) (string, bool, error) {
@@ -55,6 +69,30 @@ func (m *MemProvider) CommitFiles(_ context.Context, target Target, files []File
 		changed = false
 	}
 	m.Commits = append(m.Commits, CommitRecord{Target: target, Files: files, Message: message, SHA: sum, Changed: changed})
+	for _, f := range files {
+		m.present[target.FullPath(f.Path)] = true
+	}
+	return sum, changed, nil
+}
+
+// DeleteFiles implements Provider.
+func (m *MemProvider) DeleteFiles(_ context.Context, target Target, paths []string, message string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Err != nil {
+		err := m.Err
+		m.Err = nil
+		return "", false, err
+	}
+	changed := false
+	for _, p := range paths {
+		if m.present[target.FullPath(p)] {
+			changed = true
+			m.present[target.FullPath(p)] = false
+		}
+	}
+	sum := hashFiles([]File{{Path: "delete:" + strings.Join(paths, ",")}})
+	m.Deletes = append(m.Deletes, DeleteRecord{Target: target, Paths: paths, Message: message, SHA: sum, Changed: changed})
 	return sum, changed, nil
 }
 

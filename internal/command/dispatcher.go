@@ -162,6 +162,18 @@ func commandIDOf(ev *agentv1.Event) (string, error) {
 			return "", fmt.Errorf("command: decode render-rgd-instance: %w", err)
 		}
 		return requireID(m.CommandId)
+	case agentv1.EventType_EVENT_TYPE_SECRET_STORE_APPLY:
+		var m agentv1.SecretStoreApply
+		if err := ev.Payload.UnmarshalTo(&m); err != nil {
+			return "", fmt.Errorf("command: decode secret-store-apply: %w", err)
+		}
+		return requireID(m.CommandId)
+	case agentv1.EventType_EVENT_TYPE_SECRET_STORE_DELETE:
+		var m agentv1.SecretStoreDelete
+		if err := ev.Payload.UnmarshalTo(&m); err != nil {
+			return "", fmt.Errorf("command: decode secret-store-delete: %w", err)
+		}
+		return requireID(m.CommandId)
 	default:
 		return "", fmt.Errorf("command: unknown event type %q", ev.Type)
 	}

@@ -89,4 +89,8 @@ type Provider interface {
 	// pull request, returning its URL. Re-invoking with the same branch
 	// returns the existing open PR.
 	OpenPR(ctx context.Context, target Target, files []File, branch, title, body string) (prURL string, err error)
+	// DeleteFiles removes paths from Target.Branch and returns the new head
+	// SHA. Deleting a path that does not exist is a no-op; changed is false
+	// when the tree already lacked every path.
+	DeleteFiles(ctx context.Context, target Target, paths []string, message string) (sha string, changed bool, err error)
 }
