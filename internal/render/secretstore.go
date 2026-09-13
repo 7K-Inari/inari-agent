@@ -110,7 +110,7 @@ func RenderSecretStore(name, scope string, p SecretStoreProvider) ([]git.File, e
 		return nil, fmt.Errorf("render: provider %s auth secret name and namespace are required", p.Kind)
 	}
 	if !clusterScoped && p.AuthNamespace != SystemNamespace {
-		return nil, fmt.Errorf("render: cluster-scoped store auth secret must live in namespace %q (namespaced secretRefs cannot cross namespaces), got %q", SystemNamespace, p.AuthNamespace)
+		return nil, fmt.Errorf("render: namespaced (cluster-scope) SecretStore auth secret must live in namespace %q (namespaced secretRefs cannot cross namespaces), got %q", SystemNamespace, p.AuthNamespace)
 	}
 	provider, err := providerSpec(p, clusterScoped)
 	if err != nil {
