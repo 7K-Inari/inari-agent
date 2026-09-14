@@ -122,6 +122,29 @@ func TestMemProviderIdempotentCommit(t *testing.T) {
 	}
 }
 
+func TestMemProviderDeleteFiles(t *testing.T) {
+	m := NewMemProvider()
+	tgt := Target{Repo: "o/r", Branch: "main"}
+	files := []File{{Path: "secretstores/vault.yaml", Content: []byte("x")}}
+	if _, _, err := m.CommitFiles(context.Background(), tgt, files, "add"); err != nil {
+		t.Fatal(err)
+	}
+	_, changed, err := m.DeleteFiles(context.Background(), tgt, []string{"secretstores/vault.yaml"}, "prune")
+	if err != nil || !changed {
+		t.Fatalf("delete committed path: changed=%v err=%v", changed, err)
+	}
+	if len(m.Deletes) != 1 || m.Deletes[0].Paths[0] != "secretstores/vault.yaml" {
+		t.Fatalf("delete not recorded: %+v", m.Deletes)
+	}
+	// Deleting an absent path is a no-op (idempotent redelivery).
+	if _, changed, err := m.DeleteFiles(context.Background(), tgt, []string{"secretstores/vault.yaml"}, "prune"); err != nil || changed {
+		t.Fatalf("re-delete must be no-op: changed=%v err=%v", changed, err)
+	}
+	if _, changed, err := m.DeleteFiles(context.Background(), tgt, []string{"never/existed.yaml"}, "prune"); err != nil || changed {
+		t.Fatalf("delete absent path must be no-op: changed=%v err=%v", changed, err)
+	}
+}
+
 func TestMemProviderPRIdempotent(t *testing.T) {
 	m := NewMemProvider()
 	tgt := Target{Repo: "o/r", Branch: "main"}
@@ -141,13 +164,14 @@ func TestMemProviderPRIdempotent(t *testing.T) {
 // fakeGitHub implements the minimal Git Data + token endpoints the
 // provider exercises.
 type fakeGitHub struct {
-	mu        sync.Mutex
-	trees     map[string][]string // tree sha -> paths
-	commits   []string
-	refs      map[string]string
-	prs       []map[string]any
-	blobCount int
-	nextSHA   int
+	mu              sync.Mutex
+	trees           map[string][]string // tree sha -> paths
+	commits         []string
+	refs            map[string]string
+	prs             []map[string]any
+	blobCount       int
+	nextSHA         int
+	lastTreeEntries map[string]*string // path -> sha (nil = deletion entry)
 }
 
 func newFakeGitHub() *fakeGitHub {
@@ -201,8 +225,8 @@ func (f *fakeGitHub) handler() http.Handler {
 		var body struct {
 			BaseTree string `json:"base_tree"`
 			Tree     []struct {
-				Path string `json:"path"`
-				SHA  string `json:"sha"`
+				Path string  `json:"path"`
+				SHA  *string `json:"sha"`
 			} `json:"tree"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -213,8 +237,10 @@ func (f *fakeGitHub) handler() http.Handler {
 		}
 		sha := f.sha()
 		paths := []string{}
+		f.lastTreeEntries = map[string]*string{}
 		for _, e := range body.Tree {
 			paths = append(paths, e.Path)
+			f.lastTreeEntries[e.Path] = e.SHA
 		}
 		f.trees[sha] = paths
 		_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha})
@@ -320,6 +346,46 @@ func TestGitHubProviderCommitFiles(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("empty file set must be a no-op")
+	}
+}
+
+func TestGitHubProviderDeleteFiles(t *testing.T) {
+	fake := newFakeGitHub()
+	srv := httptest.NewServer(fake.handler())
+	t.Cleanup(srv.Close)
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := NewGitHubProvider(AppCredentials{AppID: 1, InstallationID: 2, PrivateKey: key}, srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt := Target{Repo: "o/r", Branch: "main"}
+
+	_, changed, err := p.DeleteFiles(context.Background(), tgt, []string{"secretstores/vault.yaml"}, "inari: prune secretstore vault")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("delete must report changed")
+	}
+	fake.mu.Lock()
+	if fake.refs["heads/main"] == "commit0" {
+		t.Error("ref not updated")
+	}
+	entry, ok := fake.lastTreeEntries["secretstores/vault.yaml"]
+	if !ok {
+		t.Error("tree missing deletion entry for secretstores/vault.yaml")
+	} else if entry != nil {
+		t.Errorf("deletion entry SHA = %q, want null", *entry)
+	}
+	fake.mu.Unlock()
+
+	// Empty path set => no-op.
+	if _, changed, err := p.DeleteFiles(context.Background(), tgt, nil, "inari: noop"); err != nil || changed {
+		t.Fatalf("empty delete must be no-op: changed=%v err=%v", changed, err)
 	}
 }
 

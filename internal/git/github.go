@@ -193,4 +193,54 @@ func (p *gitHubProvider) OpenPR(ctx context.Context, target Target, files []File
 	return pr.GetHTMLURL(), nil
 }
 
+// DeleteFiles implements Provider. Deletions are tree entries with a null
+// SHA (Git Data API); a path absent from the base tree leaves the tree
+// unchanged and reports changed=false.
+func (p *gitHubProvider) DeleteFiles(ctx context.Context, target Target, paths []string, message string) (string, bool, error) {
+	if len(paths) == 0 {
+		return "", false, nil
+	}
+	owner, repo := target.OwnerName()
+	ref, _, err := p.gh.Git.GetRef(ctx, owner, repo, "heads/"+target.Branch)
+	if err != nil {
+		return "", false, fmt.Errorf("git: get ref heads/%s in %s: %w", target.Branch, target.Repo, err)
+	}
+	headSHA := ref.GetObject().GetSHA()
+	baseCommit, _, err := p.gh.Git.GetCommit(ctx, owner, repo, headSHA)
+	if err != nil {
+		return "", false, fmt.Errorf("git: get commit %s: %w", headSHA, err)
+	}
+	entries := make([]*github.TreeEntry, 0, len(paths))
+	for _, path := range paths {
+		entries = append(entries, &github.TreeEntry{
+			Path: github.Ptr(target.FullPath(path)),
+			Mode: github.Ptr("100644"),
+			Type: github.Ptr("blob"),
+			SHA:  nil,
+		})
+	}
+	tree, _, err := p.gh.Git.CreateTree(ctx, owner, repo, baseCommit.GetTree().GetSHA(), entries)
+	if err != nil {
+		return "", false, fmt.Errorf("git: create tree: %w", err)
+	}
+	if tree.GetSHA() == baseCommit.GetTree().GetSHA() {
+		return headSHA, false, nil
+	}
+	commit, _, err := p.gh.Git.CreateCommit(ctx, owner, repo, &github.Commit{
+		Message: github.Ptr(message),
+		Tree:    tree,
+		Parents: []*github.Commit{{SHA: github.Ptr(headSHA)}},
+	}, nil)
+	if err != nil {
+		return "", false, fmt.Errorf("git: create commit: %w", err)
+	}
+	if _, _, err := p.gh.Git.UpdateRef(ctx, owner, repo, &github.Reference{
+		Ref:    github.Ptr("refs/heads/" + target.Branch),
+		Object: &github.GitObject{SHA: commit.SHA},
+	}, false); err != nil {
+		return "", false, fmt.Errorf("git: update ref heads/%s in %s: %w", target.Branch, target.Repo, err)
+	}
+	return commit.GetSHA(), true, nil
+}
+
 var _ Provider = (*gitHubProvider)(nil)
