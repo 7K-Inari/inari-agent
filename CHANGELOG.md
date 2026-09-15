@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/7K-Inari/inari-agent/compare/v0.4.1...v0.4.2) (2026-09-15)
+
+
+### Bug Fixes
+
+* **release:** correct setup-helm action and allow private-repo SLSA provenance ([cd46741](https://github.com/7K-Inari/inari-agent/commit/cd46741a4ad6aff13169e0d917be04cf8a97d7ba))
+
 ## [0.4.1](https://github.com/7K-Inari/inari-agent/compare/v0.4.0...v0.4.1) (2026-09-15)
 
 
