@@ -142,6 +142,8 @@ jobs:
       # env context is unavailable in reusable-workflow `with:` — hardcode.
       image: ghcr.io/7k-inari/inari-agent
       digest: ${{ needs.image.outputs.digest }}
+      # Private repo: opt out of the public transparency log (generator halts otherwise).
+      private-repository: true
 
   manifests:
     needs: [release, verify, image]
@@ -159,7 +161,7 @@ jobs:
           mkdir -p "$HOME/.local/bin"
           mv kustomize "$HOME/.local/bin/"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - uses: helm/setup-helm@v4
+      - uses: azure/setup-helm@v4
       - name: Render install manifest pinned to the release image
         run: |
           make manifests
