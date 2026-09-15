@@ -118,7 +118,7 @@ jobs:
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: "${IMAGE}@${{ steps.build.outputs.digest }}"
+          image: "${{ env.IMAGE }}@${{ steps.build.outputs.digest }}"
           format: spdx-json
           output-file: sbom.spdx.json
           upload-artifact: false
