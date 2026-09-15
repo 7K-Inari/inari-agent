@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/7K-Inari/inari-agent/compare/v0.4.2...v0.4.3) (2026-09-15)
+
+
+### Bug Fixes
+
+* **release:** pass ghcr registry credentials to SLSA provenance generator ([b320b3b](https://github.com/7K-Inari/inari-agent/commit/b320b3b206a1217c1c1f44c30a0f1e0478687595))
+
 ## [0.4.2](https://github.com/7K-Inari/inari-agent/compare/v0.4.1...v0.4.2) (2026-09-15)
 
 
