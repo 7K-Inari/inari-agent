@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/7K-Inari/inari-agent/compare/v0.4.0...v0.4.1) (2026-09-15)
+
+
+### Bug Fixes
+
+* **release:** expand IMAGE via env context in sbom-action input ([#18](https://github.com/7K-Inari/inari-agent/issues/18)) ([74de61b](https://github.com/7K-Inari/inari-agent/commit/74de61b1ada56d677d5b7aa1f877a14a4375d927))
+
 ## [0.4.0](https://github.com/7K-Inari/inari-agent/compare/v0.3.0...v0.4.0) (2026-09-14)
 
 
