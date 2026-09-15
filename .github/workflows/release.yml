@@ -144,6 +144,10 @@ jobs:
       digest: ${{ needs.image.outputs.digest }}
       # Private repo: opt out of the public transparency log (generator halts otherwise).
       private-repository: true
+      # ghcr requires registry auth for the cosign provenance attestation.
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
 
   manifests:
     needs: [release, verify, image]
