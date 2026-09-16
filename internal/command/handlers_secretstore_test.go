@@ -195,3 +195,78 @@ func TestSecretStoreDeleteHandler(t *testing.T) {
 		t.Fatalf("idempotent delete: ack %+v err %v", ack, err)
 	}
 }
+
+func TestSecretStoreDeleteRejectsPullRequestPolicy(t *testing.T) {
+	gp := git.NewMemProvider()
+	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	del := SecretStoreDeleteHandler(deps)
+
+	a, _ := anypb.New(&agentv1.SecretStoreDelete{
+		CommandId: "cmd-ss8",
+		Name:      "corp-vault",
+		Scope:     "cluster",
+		Target:    &agentv1.GitTarget{Path: "secretstores"},
+		Policy:    agentv1.CommitPolicy_COMMIT_POLICY_PULL_REQUEST,
+	})
+	result, msg, err := del(context.Background(), &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_SECRET_STORE_DELETE),
+		Payload: a,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != agentv1.CommandResult_COMMAND_RESULT_FAILED || !strings.Contains(msg, "pull-request") {
+		t.Fatalf("PR delete must fail: result %v msg %q", result, msg)
+	}
+	if len(gp.Deletes) != 0 {
+		t.Fatal("no delete may happen on PR-policy rejection")
+	}
+}
+
+func TestSecretStoreDeleteRejectsPathEscapingName(t *testing.T) {
+	gp := git.NewMemProvider()
+	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	del := SecretStoreDeleteHandler(deps)
+
+	a, _ := anypb.New(&agentv1.SecretStoreDelete{
+		CommandId: "cmd-ss9",
+		Name:      "../escape",
+		Scope:     "cluster",
+		Target:    &agentv1.GitTarget{Path: "secretstores"},
+	})
+	result, _, err := del(context.Background(), &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_SECRET_STORE_DELETE),
+		Payload: a,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+		t.Fatalf("path-escaping name must fail: %v", result)
+	}
+	if len(gp.Deletes) != 0 {
+		t.Fatal("no delete may happen on invalid name")
+	}
+}
+
+func TestSecretStoreApplyRejectsMissingProvider(t *testing.T) {
+	gp := git.NewMemProvider()
+	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	h := SecretStoreApplyHandler(deps)
+
+	result, _, err := h(context.Background(), secretStoreApplyEvent(t, &agentv1.SecretStoreApply{
+		CommandId: "cmd-ss10",
+		Name:      "x",
+		Scope:     "cluster",
+		Target:    &agentv1.GitTarget{Path: "secretstores"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+		t.Fatalf("provider-less apply must fail: %v", result)
+	}
+	if len(gp.Commits) != 0 {
+		t.Fatal("no commit may happen on missing provider")
+	}
+}
