@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/7K-Inari/inari-agent/compare/v0.4.3...v0.5.0) (2026-09-18)
+
+
+### Features
+
+* **chart:** add opt-in OIDC client ExternalSecret template ([#23](https://github.com/7K-Inari/inari-agent/issues/23)) ([8dce008](https://github.com/7K-Inari/inari-agent/commit/8dce008a29e60405e6e322791361de0999260ed7))
+
 ## [0.4.3](https://github.com/7K-Inari/inari-agent/compare/v0.4.2...v0.4.3) (2026-09-15)
 
 
