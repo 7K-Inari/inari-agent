@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/7K-Inari/inari-agent/compare/v0.5.0...v0.5.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* **chart:** grant configmaps access in agent Role (command journal, registration credentials) ([#25](https://github.com/7K-Inari/inari-agent/issues/25)) ([719a9ff](https://github.com/7K-Inari/inari-agent/commit/719a9ff09d02e126bd4fb6bfbad7e26444614224))
+
 ## [0.5.0](https://github.com/7K-Inari/inari-agent/compare/v0.4.3...v0.5.0) (2026-09-18)
 
 
