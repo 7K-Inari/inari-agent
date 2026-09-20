@@ -1,16 +1,13 @@
-# One-shot PreSync Job: resets the persisted registration's control-plane to
-# the in-cluster h2c endpoint. Rendered only when registrationReset=true; the
-# pre-upgrade hook ordering guarantees the patch lands before the agent pod
-# rolls. The inari-agent-managed Role already grants configmaps patch.
+# One-shot Job (registrationReset=true): patches the persisted registration
+# ConfigMap to the in-cluster h2c control plane and restarts the agent pod so
+# it re-reads it. Rendered as a normal resource (ArgoCD PreSync hooks only run
+# inside an explicit sync operation — a hook-only diff never triggers one).
 {{- if .Values.registrationReset }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: inari-agent-registration-reset
   namespace: {{ .Values.namespace }}
-  annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
-    "helm.sh/hook-delete-policy": hook-succeeded
 spec:
   ttlSecondsAfterFinished: 300
   template:
@@ -18,17 +15,13 @@ spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       restartPolicy: Never
       containers:
-        - name: patch
+        - name: reset
           image: bitnami/kubectl:1.31
           command:
-            - kubectl
-            - -n
-            - {{ .Values.namespace | quote }}
-            - patch
-            - configmap
-            - inari-agent-registration
-            - --type
-            - merge
-            - -p
-            - '{"data":{"control-plane":"http://inari-server.{{ .Values.controlPlaneNamespace | default "inari" }}.svc:8080"}}'
+            - /bin/sh
+            - -ec
+            - |
+              kubectl -n {{ .Values.namespace }} patch configmap inari-agent-registration \
+                --type merge -p '{"data":{"control-plane":"http://inari-server.{{ .Values.controlPlaneNamespace | default "inari" }}.svc:8080"}}'
+              kubectl -n {{ .Values.namespace }} delete pod -l app.kubernetes.io/name={{ .Chart.Name }} --wait=false
 {{- end }}
