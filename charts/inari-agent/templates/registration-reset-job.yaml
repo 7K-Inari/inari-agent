@@ -6,7 +6,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: inari-agent-registration-reset-v2
+  name: inari-agent-registration-reset-v3
   namespace: {{ .Values.namespace }}
   annotations:
     # Jobs are immutable: a changed template must replace, not patch.
