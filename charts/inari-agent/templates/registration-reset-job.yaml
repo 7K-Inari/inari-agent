@@ -8,6 +8,9 @@ kind: Job
 metadata:
   name: inari-agent-registration-reset
   namespace: {{ .Values.namespace }}
+  annotations:
+    # Jobs are immutable: a changed template must replace, not patch.
+    argocd.argoproj.io/sync-options: Replace=true
 spec:
   ttlSecondsAfterFinished: 300
   template:
