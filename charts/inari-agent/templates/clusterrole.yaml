@@ -35,3 +35,8 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list"]
+  # ArgoCD Applications: status streamer (app health/sync reporting) and
+  # invoke-action ownership checks (inari.dev/managed-by label).
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch"]
