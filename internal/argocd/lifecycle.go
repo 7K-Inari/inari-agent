@@ -16,7 +16,7 @@ import (
 // SupportedMin are refused adoption — never silently upgraded.
 const (
 	// BundleLine is the ArgoCD minor line the agent's bundle installs (N).
-	BundleLine = "3.0"
+	BundleLine = "3.3"
 	// PreviousLine is the N−1 supported minor line (last 2.x, per spike).
 	PreviousLine = "2.14"
 	// SupportedMin is the oldest BYO version eligible for adoption.
