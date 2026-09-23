@@ -5,6 +5,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -264,8 +265,16 @@ func (r *AgentReconciler) handleCommand(
 ) {
 	ack, err := handler.HandleEvent(ctx, ev)
 	if err != nil {
-		r.sendAck(ctx, client, ev.EventId, &agentv1.CommandAck{
-			CommandId: ev.EventId,
+		// Correlate the NACK by command_id so the server surfaces a typed
+		// error instead of an invisible timeout (issue #29). Fall back to
+		// the event id only when the command id is unrecoverable.
+		cmdID := ev.EventId
+		var cmdErr *command.Error
+		if errors.As(err, &cmdErr) && cmdErr.CommandID != "" {
+			cmdID = cmdErr.CommandID
+		}
+		r.sendAck(ctx, client, cmdID, &agentv1.CommandAck{
+			CommandId: cmdID,
 			Result:    agentv1.CommandResult_COMMAND_RESULT_FAILED,
 			Message:   err.Error(),
 		}, agentv1.EventType_EVENT_TYPE_COMMAND_NACK)
