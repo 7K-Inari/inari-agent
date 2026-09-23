@@ -2,6 +2,7 @@ package capability
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -104,14 +105,14 @@ func TestAggregatorReplaysFullSnapshotOnResyncWithoutDuplicates(t *testing.T) {
 
 	w.ch <- &agentv1.Capability{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Name: "a", Version: "v1"}
 	w.ch <- &agentv1.Capability{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Name: "b", Version: "v1"}
-	waitForSent(t, client, 2)
+	waitForCapabilities(t, client, 2)
 
 	resyncPayload, _ := anypb.New(&agentv1.Event{})
 	_ = resyncPayload
 	if err := agg.ReplayFullState(ctx); err != nil {
 		t.Fatalf("ReplayFullState: %v", err)
 	}
-	waitForSent(t, client, 3)
+	waitForCapabilities(t, client, 4)
 
 	updates := capabilityUpdates(t, client.sentEvents())
 	full := updates[len(updates)-1]
@@ -124,6 +125,81 @@ func TestAggregatorReplaysFullSnapshotOnResyncWithoutDuplicates(t *testing.T) {
 	}
 	if len(full.Capabilities) != 2 || names["a"] != 1 || names["b"] != 1 {
 		t.Errorf("full sync must contain each capability exactly once, got %v", names)
+	}
+}
+
+func TestAggregatorChecksumMatchesFullRecompute(t *testing.T) {
+	w := &fakeWatcher{source: SourceCRD, ch: make(chan *agentv1.Capability, 4)}
+	client := &fakeStreamClient{events: make(chan *agentv1.Event, 1)}
+	agg := NewAggregator("tenant-1", "cluster-1", client, []Watcher{w})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = agg.Run(ctx) }()
+
+	caps := []*agentv1.Capability{
+		{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Group: "a.io", Name: "a", Version: "v1"},
+		{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Group: "b.io", Name: "b", Version: "v1"},
+		{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_HELM_RELEASE, Name: "rel", Version: "1.2.3"},
+	}
+	for _, c := range caps {
+		w.ch <- c
+	}
+	waitForCapabilities(t, client, 3)
+	if got, want := agg.Checksum(), StateChecksum(caps); got != want {
+		t.Errorf("incremental checksum %q != full recompute %q", got, want)
+	}
+
+	// Update one capability: checksum must still match a full recompute.
+	// (The snapshot key includes Version, so a version bump is an upsert of
+	// a new entry alongside the old one — same semantics as before.)
+	updated := &agentv1.Capability{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Group: "a.io", Name: "a", Version: "v2"}
+	w.ch <- updated
+	waitForCapabilities(t, client, 4)
+	if got, want := agg.Checksum(), StateChecksum(append(caps, updated)); got != want {
+		t.Errorf("after update: incremental checksum %q != full recompute %q", got, want)
+	}
+}
+
+// waitForCapabilities waits until at least n capabilities have been sent
+// across all updates (updates may be batched).
+func waitForCapabilities(t *testing.T, client *fakeStreamClient, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		total := 0
+		for _, u := range capabilityUpdates(t, client.sentEvents()) {
+			total += len(u.Capabilities)
+		}
+		if total >= n {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d sent capabilities", n)
+}
+
+func TestAggregatorCoalescesBursts(t *testing.T) {
+	w := &fakeWatcher{source: SourceCRD, ch: make(chan *agentv1.Capability, 10)}
+	client := &fakeStreamClient{events: make(chan *agentv1.Event, 1)}
+	agg := NewAggregator("tenant-1", "cluster-1", client, []Watcher{w})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = agg.Run(ctx) }()
+
+	for i := 0; i < 10; i++ {
+		w.ch <- &agentv1.Capability{
+			Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD,
+			Name: fmt.Sprintf("crd-%d", i), Version: "v1",
+		}
+	}
+	waitForCapabilities(t, client, 10)
+
+	// A back-to-back burst must be coalesced into fewer update events than
+	// capabilities (one proto + one checksum per batch, not per event).
+	if n := len(client.sentEvents()); n >= 10 {
+		t.Errorf("burst of 10 capabilities produced %d update events; want coalescing", n)
 	}
 }
 
@@ -151,6 +227,32 @@ func TestAggregatorDeleteRemovesFromSnapshot(t *testing.T) {
 	empty := StateChecksum(nil)
 	if agg.Checksum() != empty {
 		t.Error("snapshot must be empty after delete")
+	}
+}
+
+func TestAggregatorMetadataOnlyDeleteKeepsChecksumConsistent(t *testing.T) {
+	w := &fakeWatcher{source: SourceCRD, ch: make(chan *agentv1.Capability, 4)}
+	client := &fakeStreamClient{events: make(chan *agentv1.Event, 1)}
+	agg := NewAggregator("tenant-1", "cluster-1", client, []Watcher{w})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = agg.Run(ctx) }()
+
+	keep := &agentv1.Capability{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Group: "b.io", Name: "keep", Version: "v1"}
+	gone := &agentv1.Capability{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Group: "a.io", Name: "gone", Version: "v1"}
+	w.ch <- keep
+	w.ch <- gone
+	waitForCapabilities(t, client, 2)
+
+	// Metadata-only delete (empty Group): matches by kind+name across groups.
+	w.ch <- &agentv1.Capability{
+		Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Name: "gone",
+		Action: agentv1.CapabilityAction_CAPABILITY_ACTION_DELETE,
+	}
+	waitForCapabilities(t, client, 3)
+	if got, want := agg.Checksum(), StateChecksum([]*agentv1.Capability{keep}); got != want {
+		t.Errorf("after metadata-only delete: incremental checksum %q != full recompute %q", got, want)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -24,30 +25,38 @@ type Aggregator struct {
 	Client    stream.Client
 	Watchers  []Watcher
 
+	// BatchWindow coalesces watcher bursts into one CapabilityUpdate
+	// (default 100ms); MaxBatch caps batch size (default 64). On CRD-heavy
+	// clusters per-event sends keep the send path saturated (issue #28).
+	BatchWindow time.Duration
+	MaxBatch    int
+
 	mu       sync.Mutex
 	snapshot map[string]*agentv1.Capability
+	digests  map[string][]byte // per-capability digest cache (incremental checksum)
 }
 
 // NewAggregator builds an Aggregator over the given watchers.
 func NewAggregator(tenantID, clusterID string, client stream.Client, watchers []Watcher) *Aggregator {
 	return &Aggregator{
-		TenantID:  tenantID,
-		ClusterID: clusterID,
-		Client:    client,
-		Watchers:  watchers,
-		snapshot:  map[string]*agentv1.Capability{},
+		TenantID:    tenantID,
+		ClusterID:   clusterID,
+		Client:      client,
+		Watchers:    watchers,
+		BatchWindow: 100 * time.Millisecond,
+		MaxBatch:    64,
+		snapshot:    map[string]*agentv1.Capability{},
+		digests:     map[string][]byte{},
 	}
 }
 
-// Checksum returns the current full-state checksum (handshake input).
+// Checksum returns the current full-state checksum (handshake input). It is
+// incremental: per-capability digests are cached in apply, so this is O(N)
+// hashing without re-marshalling the snapshot.
 func (a *Aggregator) Checksum() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	caps := make([]*agentv1.Capability, 0, len(a.snapshot))
-	for _, c := range a.snapshot {
-		caps = append(caps, c)
-	}
-	return StateChecksum(caps)
+	return ChecksumDigests(a.digests)
 }
 
 // Run starts all watchers and pumps capability updates to the stream until
@@ -81,6 +90,15 @@ func (a *Aggregator) Run(ctx context.Context) error {
 		close(merged)
 	}()
 
+	batchWindow := a.BatchWindow
+	if batchWindow <= 0 {
+		batchWindow = 100 * time.Millisecond
+	}
+	maxBatch := a.MaxBatch
+	if maxBatch <= 0 {
+		maxBatch = 64
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -89,8 +107,30 @@ func (a *Aggregator) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
+			// Coalesce the burst: keep draining for a short window so one
+			// CapabilityUpdate (one proto marshal + one checksum) covers many
+			// watcher events instead of one per event (issue #28).
+			batch := []*agentv1.Capability{cap}
 			a.apply(cap)
-			if err := a.send(ctx, []*agentv1.Capability{cap}, false); err != nil {
+			timer := time.NewTimer(batchWindow)
+		drain:
+			for len(batch) < maxBatch {
+				select {
+				case next, ok := <-merged:
+					if !ok {
+						break drain
+					}
+					a.apply(next)
+					batch = append(batch, next)
+				case <-timer.C:
+					break drain
+				case <-ctx.Done():
+					timer.Stop()
+					return nil
+				}
+			}
+			timer.Stop()
+			if err := a.send(ctx, batch, false); err != nil {
 				return err
 			}
 		}
@@ -106,18 +146,23 @@ func (a *Aggregator) apply(cap *agentv1.Capability) {
 	key := capabilityKey(cap)
 	if cap.Action == agentv1.CapabilityAction_CAPABILITY_ACTION_DELETE {
 		delete(a.snapshot, key)
+		delete(a.digests, key)
 		if cap.Group == "" {
 			prefix := cap.Kind.String() + "/"
 			suffix := "/" + cap.Name + "/"
 			for k := range a.snapshot {
 				if strings.HasPrefix(k, prefix) && strings.Contains(k, suffix) {
 					delete(a.snapshot, k)
+					delete(a.digests, k)
 				}
 			}
 		}
 		return
 	}
 	a.snapshot[key] = cap
+	if sum, ok := DigestCapability(cap); ok {
+		a.digests[key] = sum
+	}
 }
 
 // ReplayFullState re-sends the entire snapshot as a full sync. Called by
@@ -146,6 +191,12 @@ func (a *Aggregator) send(ctx context.Context, caps []*agentv1.Capability, fullS
 	if err != nil {
 		return fmt.Errorf("aggregator: marshal capability update: %w", err)
 	}
+	syncKind := "incremental"
+	if fullSync {
+		syncKind = "full"
+	}
+	capabilityUpdatesTotal.WithLabelValues(syncKind).Inc()
+	capabilityUpdateBatchSize.Observe(float64(len(caps)))
 	return a.Client.Send(ctx, &agentv1.Event{
 		EventId:    fmt.Sprintf("cap-%s-%d", a.ClusterID, timestamppb.Now().AsTime().UnixNano()),
 		ResourceId: a.ClusterID,

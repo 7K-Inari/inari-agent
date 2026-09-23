@@ -167,7 +167,7 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 		return capability.FilterAvailable(kube.Discovery(), ctrl.Log.WithName("capability"), watchers)
 	}
 	r.NewStreamClient = func(creds *registration.Credentials, clientSecret string, checksum func() string) stream.Client {
-		return stream.NewConnectClient(
+		c := stream.NewConnectClient(
 			creds.ControlPlane,
 			&stream.OAuth2TokenSource{
 				TokenURL:     creds.TokenURL,
@@ -178,6 +178,16 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 			creds.TenantID,
 			checksum,
 		)
+		// Optional override of the receive dead-man switch (default 2m).
+		if v := os.Getenv("INARI_STREAM_RECEIVE_TIMEOUT"); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				setupLog.Error(err, "invalid INARI_STREAM_RECEIVE_TIMEOUT, using default", "value", v)
+			} else {
+				c.ReceiveTimeout = d
+			}
+		}
+		return c
 	}
 	gitOps, err := buildGitOps(context.Background(), kubeClient, dynClient)
 	if err != nil {

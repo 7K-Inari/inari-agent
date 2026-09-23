@@ -31,6 +31,15 @@ type TokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
 
+// ExpiringTokenSource is an optional TokenSource extension that also
+// reports the token's expiry. When supported, the stream client rotates the
+// session shortly before expiry instead of letting the gateway terminate it
+// mid-stream (issue #28).
+type ExpiringTokenSource interface {
+	TokenSource
+	TokenWithExpiry(ctx context.Context) (token string, expiry time.Time, err error)
+}
+
 // Client is the agent-side bidirectional stream. Implementations reconnect
 // with backoff on partition and re-handshake with the last acknowledged
 // state checksum on reconnect; the gateway decides whether a full resync is
