@@ -239,6 +239,17 @@ func (c *ConnectClient) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		if errors.Is(err, errTokenRotation) {
+			// Planned pre-expiry rotation, not a failure: reconnect promptly
+			// and don't ratchet the backoff, or the stream spends ever-longer
+			// stretches down between healthy sessions (issue #28 QA).
+			delay = backoff.InitialInterval
+			if log := c.logger(); log != nil {
+				log.Info("rotating stream session before token expiry",
+					"sessionDuration", time.Since(start).Round(time.Second).String())
+			}
+			continue
+		}
 		if err != nil {
 			log := c.Logger
 			if log == nil {
@@ -399,12 +410,15 @@ func (c *ConnectClient) session(ctx context.Context) error {
 				// droppable under saturation: the next ping re-pongs.
 				pong, perr := anypb.New(&agentv1.Pong{Time: timestamppb.Now()})
 				if perr == nil {
+					// Pongs carry no Sequence: they are droppable keepalives,
+					// and consuming a sequence number for an event that may
+					// never reach the wire opens a gap the gateway would read
+					// as a resync trigger (issue #28 QA).
 					ev := &agentv1.Event{
-						EventId:  "pong-" + resp.Event.EventId,
-						Type:     agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_PONG),
-						Payload:  pong,
-						Time:     timestamppb.Now(),
-						Sequence: c.seq.Add(1),
+						EventId: "pong-" + resp.Event.EventId,
+						Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_PONG),
+						Payload: pong,
+						Time:    timestamppb.Now(),
 					}
 					select {
 					case c.sendCh <- ev:

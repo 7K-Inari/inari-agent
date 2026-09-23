@@ -397,6 +397,23 @@ func TestSessionRotatesBeforeTokenExpiry(t *testing.T) {
 	waitFor(t, "session rotation before token expiry", func() bool { return gw.connectCount() >= 2 })
 }
 
+// Planned pre-expiry rotations must reconnect promptly: if rotation ratcheted
+// the reconnect backoff like a failure, the stream would spend ever-longer
+// stretches down between healthy sessions (Keycloak 300s TTL → a 5-minute
+// outage every ~4.5 minutes in steady state).
+func TestTokenRotationReconnectsWithoutBackoff(t *testing.T) {
+	gw := &fakeGateway{}
+	c := newTestClient(t, gw, func(c *ConnectClient) {
+		c.Backoff = Backoff{InitialInterval: 50 * time.Millisecond, MaxInterval: 5 * time.Second, Multiplier: 2}
+	})
+	c.Token = expiringToken{ttl: 100 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	waitFor(t, "prompt reconnect after rotation", func() bool { return gw.connectCount() >= 9 })
+}
+
 func TestDefaultHTTPClientConfiguresHTTP2Keepalive(t *testing.T) {
 	hc, ok := DefaultHTTPClient("http://gw.example").(*http.Client)
 	if !ok {
@@ -441,6 +458,26 @@ func TestPongAndSendConcurrent(t *testing.T) {
 		}
 		return pongs >= 3
 	})
+
+	// Pongs are droppable keepalives and must not consume the sequenced
+	// stream: a dropped sequenced pong would open a gap the gateway reads as
+	// a resync trigger. Sequenced events must stay contiguous around them.
+	var lastSeq int64
+	for _, ev := range gw.received() {
+		if agentv1.EventTypeFromString(ev.Type) == agentv1.EventType_EVENT_TYPE_PONG {
+			if ev.Sequence != 0 {
+				t.Errorf("pong %s has Sequence %d, want 0 (unsequenced keepalive)", ev.EventId, ev.Sequence)
+			}
+			continue
+		}
+		if ev.Sequence == 0 {
+			continue // handshake is unsequenced
+		}
+		if ev.Sequence <= lastSeq {
+			t.Errorf("event %s Sequence %d not increasing (last %d)", ev.EventId, ev.Sequence, lastSeq)
+		}
+		lastSeq = ev.Sequence
+	}
 }
 
 func TestBackoffWaitsAreJittered(t *testing.T) {

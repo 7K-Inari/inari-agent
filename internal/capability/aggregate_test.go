@@ -230,6 +230,32 @@ func TestAggregatorDeleteRemovesFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestAggregatorMetadataOnlyDeleteKeepsChecksumConsistent(t *testing.T) {
+	w := &fakeWatcher{source: SourceCRD, ch: make(chan *agentv1.Capability, 4)}
+	client := &fakeStreamClient{events: make(chan *agentv1.Event, 1)}
+	agg := NewAggregator("tenant-1", "cluster-1", client, []Watcher{w})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = agg.Run(ctx) }()
+
+	keep := &agentv1.Capability{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Group: "b.io", Name: "keep", Version: "v1"}
+	gone := &agentv1.Capability{Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Group: "a.io", Name: "gone", Version: "v1"}
+	w.ch <- keep
+	w.ch <- gone
+	waitForCapabilities(t, client, 2)
+
+	// Metadata-only delete (empty Group): matches by kind+name across groups.
+	w.ch <- &agentv1.Capability{
+		Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD, Name: "gone",
+		Action: agentv1.CapabilityAction_CAPABILITY_ACTION_DELETE,
+	}
+	waitForCapabilities(t, client, 3)
+	if got, want := agg.Checksum(), StateChecksum([]*agentv1.Capability{keep}); got != want {
+		t.Errorf("after metadata-only delete: incremental checksum %q != full recompute %q", got, want)
+	}
+}
+
 func waitForSent(t *testing.T, client *fakeStreamClient, n int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
