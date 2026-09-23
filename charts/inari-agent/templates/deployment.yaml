@@ -37,6 +37,9 @@ spec:
               value: {{ .Values.config.clusterLabels | quote }}
             - name: INARI_HELM_NAMESPACES
               value: {{ .Values.config.helmNamespaces | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
             - name: health
               containerPort: 8081

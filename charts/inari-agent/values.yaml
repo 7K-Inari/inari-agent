@@ -46,3 +46,11 @@ oidcSecret:
   secretStoreKind: ClusterSecretStore
   # Vault path, e.g. inari/clusters/<cluster-id>/oidc-client-secret.
   remotePath: ""
+
+# Extra INARI_* env entries (e.g. INARI_ARGOCD_API_URL/INARI_ARGOCD_API_TOKEN
+# for invoke-action against the tenant-local ArgoCD).
+extraEnv: []
+
+# One-shot control-plane reset for the persisted registration ConfigMap
+# (renders a PreSync patch Job). Flip back to false after it succeeds.
+registrationReset: false

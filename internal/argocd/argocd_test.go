@@ -54,12 +54,14 @@ func TestInSkewPolicy(t *testing.T) {
 		version string
 		want    bool
 	}{
-		{"3.0.6", true},   // bundle line N
+		{"3.3.8", true},   // bundle line N
+		{"3.2.4", false},  // between lines: not N, not N-1
+		{"3.0.6", false},  // two lines behind
 		{"2.14.11", true}, // N-1
 		{"2.14.0", true},  // floor
 		{"2.13.9", false}, // below floor
-		{"3.1.0", false},  // newer than bundle
-		{"v2.14.5", true}, // leading v tolerated
+		{"3.4.0", false},  // newer than bundle
+		{"v3.3.8", true},  // leading v tolerated
 	}
 	for _, tc := range cases {
 		if got := InSkew(tc.version); got != tc.want {
@@ -114,7 +116,7 @@ func TestLifecycleEnsureReady(t *testing.T) {
 		}
 	})
 	t.Run("byo adopts in-skew", func(t *testing.T) {
-		kube := k8sfake.NewSimpleClientset(argocdServerDeployment("gitops", "argocd:v3.0.6", false))
+		kube := k8sfake.NewSimpleClientset(argocdServerDeployment("gitops", "argocd:v3.3.8", false))
 		l := &Lifecycle{Kube: kube, Mode: ModeBYO}
 		ns, err := l.EnsureReady(ctx)
 		if err != nil || ns != "gitops" {
@@ -147,7 +149,7 @@ metadata:
 		}
 	})
 	t.Run("bundle ready on managed in-skew install", func(t *testing.T) {
-		kube := k8sfake.NewSimpleClientset(argocdServerDeployment("argocd", "argocd:v3.0.0", false))
+		kube := k8sfake.NewSimpleClientset(argocdServerDeployment("argocd", "argocd:v3.3.0", false))
 		l := &Lifecycle{Kube: kube, Mode: ModeBundle}
 		if _, err := l.EnsureReady(ctx); err != nil {
 			t.Fatal(err)
