@@ -36,11 +36,22 @@ var (
 	errTokenRotation = errors.New("stream: token nearing expiry, rotating session")
 )
 
+// handshakeError marks failures before the session is established (token
+// fetch, handshake exchange) so they classify separately from mid-stream
+// receive errors.
+type handshakeError struct{ err error }
+
+func (e *handshakeError) Error() string { return e.err.Error() }
+func (e *handshakeError) Unwrap() error { return e.err }
+
 // sessionCause maps a session error to a stable metric label.
 func sessionCause(err error) string {
+	var hsErr *handshakeError
 	switch {
 	case err == nil, errors.Is(err, context.Canceled):
 		return "shutdown"
+	case errors.As(err, &hsErr):
+		return "handshake_error"
 	case errors.Is(err, errDeadman):
 		return "deadman"
 	case errors.Is(err, errTokenRotation):
@@ -278,7 +289,7 @@ func (c *ConnectClient) session(ctx context.Context) error {
 
 	token, expiry, err := c.token(ctx)
 	if err != nil {
-		return fmt.Errorf("stream: fetch token: %w", err)
+		return &handshakeError{fmt.Errorf("stream: fetch token: %w", err)}
 	}
 	httpClient := c.HTTPClient
 	if httpClient == nil {
@@ -303,7 +314,7 @@ func (c *ConnectClient) session(ctx context.Context) error {
 		LastSeenStateChecksum: checksumOf(c.Checksum),
 	})
 	if err != nil {
-		return fmt.Errorf("stream: marshal handshake: %w", err)
+		return &handshakeError{fmt.Errorf("stream: marshal handshake: %w", err)}
 	}
 	if err := bidi.Send(&agentv1.ConnectRequest{Event: &agentv1.Event{
 		EventId: fmt.Sprintf("handshake-%d", time.Now().UnixNano()),
@@ -311,20 +322,20 @@ func (c *ConnectClient) session(ctx context.Context) error {
 		Payload: hsPayload,
 		Time:    timestamppb.Now(),
 	}}); err != nil {
-		return fmt.Errorf("stream: send handshake: %w", err)
+		return &handshakeError{fmt.Errorf("stream: send handshake: %w", err)}
 	}
 
 	// First inbound message must be the handshake response.
 	first, err := bidi.Receive()
 	if err != nil {
-		return fmt.Errorf("stream: receive handshake response: %w", err)
+		return &handshakeError{fmt.Errorf("stream: receive handshake response: %w", err)}
 	}
 	var hsResp agentv1.HandshakeResponse
 	if first.Event == nil || first.Event.Payload == nil || !first.Event.Payload.MessageIs(&hsResp) {
-		return errors.New("stream: expected handshake response as first server message")
+		return &handshakeError{errors.New("stream: expected handshake response as first server message")}
 	}
 	if err := first.Event.Payload.UnmarshalTo(&hsResp); err != nil {
-		return fmt.Errorf("stream: decode handshake response: %w", err)
+		return &handshakeError{fmt.Errorf("stream: decode handshake response: %w", err)}
 	}
 	c.setConnected(true)
 
