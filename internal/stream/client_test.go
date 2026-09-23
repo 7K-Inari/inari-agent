@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -22,6 +23,19 @@ type staticToken string
 
 func (s staticToken) Token(context.Context) (string, error) { return string(s), nil }
 
+// expiringToken issues tokens that expire after ttl, to exercise pre-expiry
+// session rotation (issue #28: Keycloak's default 300s token lifespan kills
+// the stream on a ~5-minute cadence when the gateway enforces exp mid-stream).
+type expiringToken struct {
+	ttl time.Duration
+}
+
+func (e expiringToken) Token(context.Context) (string, error) { return "test-jwt", nil }
+
+func (e expiringToken) TokenWithExpiry(context.Context) (string, time.Time, error) {
+	return "test-jwt", time.Now().Add(e.ttl), nil
+}
+
 // fakeGateway is an in-process Agent Gateway used to exercise the stream
 // client over real HTTP.
 type fakeGateway struct {
@@ -35,6 +49,9 @@ type fakeGateway struct {
 	// closeFirstAfter closes the first stream after this long (partition
 	// simulation); later connections stay open.
 	closeFirstAfter time.Duration
+	// pingEvery, if > 0, pings the client on an interval after the
+	// handshake instead of only once.
+	pingEvery time.Duration
 
 	pingOnce sync.Once
 }
@@ -52,6 +69,21 @@ func (f *fakeGateway) Connect(
 	stream *connect.BidiStream[agentv1.ConnectRequest, agentv1.ConnectResponse],
 ) error {
 	conn := f.recordConnect(stream.RequestHeader().Get("Authorization"))
+
+	// connect-go bidi streams are not safe for concurrent Send; serialize.
+	var sendMu sync.Mutex
+	send := func(resp *agentv1.ConnectResponse) error {
+		sendMu.Lock()
+		defer sendMu.Unlock()
+		return stream.Send(resp)
+	}
+	// Ping goroutines must stop before the handler returns (Close races Send).
+	pingDone := make(chan struct{})
+	var pingWg sync.WaitGroup
+	defer func() {
+		close(pingDone)
+		pingWg.Wait()
+	}()
 
 	type recvResult struct {
 		req *agentv1.ConnectRequest
@@ -83,7 +115,7 @@ func (f *fakeGateway) Connect(
 			if rr.err != nil {
 				return nil
 			}
-			if done := f.handle(stream, rr.req.Event); done {
+			if done := f.handle(send, pingDone, &pingWg, rr.req.Event); done {
 				return nil
 			}
 		}
@@ -92,7 +124,7 @@ func (f *fakeGateway) Connect(
 
 // handle processes one inbound event. It returns true if the handler should
 // exit.
-func (f *fakeGateway) handle(stream *connect.BidiStream[agentv1.ConnectRequest, agentv1.ConnectResponse], ev *agentv1.Event) bool {
+func (f *fakeGateway) handle(send func(*agentv1.ConnectResponse) error, pingDone <-chan struct{}, pingWg *sync.WaitGroup, ev *agentv1.Event) bool {
 	if ev == nil {
 		return false
 	}
@@ -110,15 +142,39 @@ func (f *fakeGateway) handle(stream *connect.BidiStream[agentv1.ConnectRequest, 
 			ServerContractVersions: "inari.agent.v1",
 			ResyncRequired:         f.resyncNeeded,
 		})
-		_ = stream.Send(&agentv1.ConnectResponse{Event: &agentv1.Event{
+		_ = send(&agentv1.ConnectResponse{Event: &agentv1.Event{
 			EventId: "srv-handshake",
 			Type:    "inari.agent.handshake.v1",
 			Payload: resp,
 		}})
 		// Opportunistically send a ping right after the handshake.
 		f.pingOnce.Do(func() {
+			if f.pingEvery > 0 {
+				pingWg.Add(1)
+				go func() {
+					defer pingWg.Done()
+					ticker := time.NewTicker(f.pingEvery)
+					defer ticker.Stop()
+					for i := 0; ; i++ {
+						select {
+						case <-pingDone:
+							return
+						case <-ticker.C:
+							ping, _ := anypb.New(&agentv1.Ping{})
+							if err := send(&agentv1.ConnectResponse{Event: &agentv1.Event{
+								EventId: fmt.Sprintf("srv-ping-%d", i),
+								Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_PING),
+								Payload: ping,
+							}}); err != nil {
+								return
+							}
+						}
+					}
+				}()
+				return
+			}
 			ping, _ := anypb.New(&agentv1.Ping{})
-			_ = stream.Send(&agentv1.ConnectResponse{Event: &agentv1.Event{
+			_ = send(&agentv1.ConnectResponse{Event: &agentv1.Event{
 				EventId: "srv-ping-1",
 				Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_PING),
 				Payload: ping,
@@ -328,6 +384,63 @@ func TestEmitBackpressuresInsteadOfDropping(t *testing.T) {
 	if ev := <-c.events; ev.EventId != "cmd-1" {
 		t.Fatalf("command event lost or reordered: got %q", ev.EventId)
 	}
+}
+
+func TestSessionRotatesBeforeTokenExpiry(t *testing.T) {
+	gw := &fakeGateway{}
+	c := newTestClient(t, gw)
+	c.Token = expiringToken{ttl: 200 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	waitFor(t, "session rotation before token expiry", func() bool { return gw.connectCount() >= 2 })
+}
+
+func TestDefaultHTTPClientConfiguresHTTP2Keepalive(t *testing.T) {
+	hc, ok := DefaultHTTPClient("http://gw.example").(*http.Client)
+	if !ok {
+		t.Fatal("h2c client must be *http.Client")
+	}
+	tr, ok := hc.Transport.(*http2.Transport)
+	if !ok {
+		t.Fatalf("h2c transport = %T, want *http2.Transport", hc.Transport)
+	}
+	if tr.ReadIdleTimeout <= 0 {
+		t.Error("ReadIdleTimeout must be > 0 so dead connections surface as recv errors")
+	}
+	if tr.PingTimeout <= 0 {
+		t.Error("PingTimeout must be > 0 so unanswered keepalive pings fail fast")
+	}
+}
+
+func TestPongAndSendConcurrent(t *testing.T) {
+	gw := &fakeGateway{pingEvery: 20 * time.Millisecond}
+	c := newTestClient(t, gw)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+	waitFor(t, "connect", func() bool { return gw.connectCount() >= 1 })
+
+	payload, _ := anypb.New(&agentv1.CapabilityUpdate{StateChecksum: "checksum-abc"})
+	for i := 0; i < 20; i++ {
+		if err := c.Send(ctx, &agentv1.Event{
+			EventId: fmt.Sprintf("evt-%d", i),
+			Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_CAPABILITY_UPDATE),
+			Payload: payload,
+		}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+	}
+	waitFor(t, "pongs while sending", func() bool {
+		pongs := 0
+		for _, ev := range gw.received() {
+			if agentv1.EventTypeFromString(ev.Type) == agentv1.EventType_EVENT_TYPE_PONG {
+				pongs++
+			}
+		}
+		return pongs >= 3
+	})
 }
 
 func TestBackoffWaitsAreJittered(t *testing.T) {

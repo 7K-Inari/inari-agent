@@ -28,6 +28,30 @@ import (
 // on every (re)connect.
 const handshakeEventType = "inari.agent.handshake.v1"
 
+// Session termination sentinels, classified into metrics/logs by
+// sessionCause (issue #28 instrumentation).
+var (
+	errDeadman       = errors.New("stream: receive timeout (keepalive dead-man switch)")
+	errSendPump      = errors.New("stream: send pump failed")
+	errTokenRotation = errors.New("stream: token nearing expiry, rotating session")
+)
+
+// sessionCause maps a session error to a stable metric label.
+func sessionCause(err error) string {
+	switch {
+	case err == nil, errors.Is(err, context.Canceled):
+		return "shutdown"
+	case errors.Is(err, errDeadman):
+		return "deadman"
+	case errors.Is(err, errTokenRotation):
+		return "token_rotation"
+	case errors.Is(err, errSendPump):
+		return "send_error"
+	default:
+		return "recv_error"
+	}
+}
+
 // ConnectClient is the production stream.Client backed by the inari-api
 // EventStreamService (ConnectRPC; use connect.WithGRPC-compatible servers
 // transparently — ConnectRPC speaks gRPC when the server does).
@@ -90,6 +114,10 @@ func NewConnectClient(address string, token TokenSource, agentVersion, tenantID 
 // the stdlib transport with automatic HTTP/2 and HTTPS_PROXY support
 // (HTTP/2 CONNECT, plan §12.1/5); http:// addresses (in-cluster/test) use
 // h2c prior-knowledge.
+//
+// HTTP/2 keepalive pings are enabled on both paths so a silently blackholed
+// connection (e.g. an LB idle-timeout drop) surfaces as a receive error
+// instead of only tripping the receive dead-man switch (issue #28).
 func DefaultHTTPClient(address string) connect.HTTPClient {
 	if strings.HasPrefix(address, "http://") {
 		return &http.Client{Transport: &http2.Transport{
@@ -98,13 +126,22 @@ func DefaultHTTPClient(address string) connect.HTTPClient {
 				d := &net.Dialer{Timeout: 10 * time.Second}
 				return d.DialContext(ctx, network, addr)
 			},
+			ReadIdleTimeout: 30 * time.Second,
+			PingTimeout:     15 * time.Second,
 		}}
 	}
-	return &http.Client{Transport: &http.Transport{
+	t1 := &http.Transport{
 		Proxy:              http.ProxyFromEnvironment,
 		ForceAttemptHTTP2:  true,
 		DisableCompression: true,
-	}}
+	}
+	// Enable HTTP/2 keepalive pings on the https path too: ConfigureTransports
+	// returns the underlying *http2.Transport the stdlib delegates to.
+	if h2, err := http2.ConfigureTransports(t1); err == nil {
+		h2.ReadIdleTimeout = 30 * time.Second
+		h2.PingTimeout = 15 * time.Second
+	}
+	return &http.Client{Transport: t1}
 }
 
 // Events implements Client.
@@ -126,6 +163,7 @@ func (c *ConnectClient) Send(ctx context.Context, event *agentv1.Event) error {
 	}
 	select {
 	case c.sendCh <- event:
+		streamSendQueueDepth.Set(float64(len(c.sendCh)))
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -181,8 +219,12 @@ func (c *ConnectClient) Run(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
+		start := time.Now()
 		err := c.session(ctx)
 		c.setConnected(false)
+		cause := sessionCause(err)
+		streamSessionsTotal.WithLabelValues(cause).Inc()
+		streamSessionDuration.Observe(time.Since(start).Seconds())
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -191,7 +233,10 @@ func (c *ConnectClient) Run(ctx context.Context) error {
 			if log == nil {
 				log = slog.Default()
 			}
-			log.Warn("stream session ended, backing off", "error", err, "retryIn", delay.String())
+			log.Warn("stream session ended, backing off",
+				"error", err, "cause", cause,
+				"sessionDuration", time.Since(start).Round(time.Second).String(),
+				"retryIn", delay.String())
 		}
 		wait := jitterDelay(delay)
 		select {
@@ -231,7 +276,7 @@ func (c *ConnectClient) session(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	token, err := c.Token.Token(ctx)
+	token, expiry, err := c.token(ctx)
 	if err != nil {
 		return fmt.Errorf("stream: fetch token: %w", err)
 	}
@@ -283,6 +328,28 @@ func (c *ConnectClient) session(ctx context.Context) error {
 	}
 	c.setConnected(true)
 
+	// Rotate the session shortly before the JWT expires: gateways that
+	// enforce exp on an open stream otherwise terminate it on the token
+	// lifespan cadence (Keycloak default: 300s, issue #28). Reconnect is
+	// safe — the handshake is idempotent and checksum-resynced.
+	var rotate <-chan time.Time
+	if !expiry.IsZero() {
+		ttl := time.Until(expiry)
+		margin := min(30*time.Second, ttl/4)
+		if d := ttl - margin; d > 0 {
+			rotate = time.After(d)
+		} else {
+			rotate = time.After(0) // already (nearly) expired: rotate immediately
+		}
+	}
+	if log := c.logger(); log != nil {
+		attrs := []any{"sessionID", hsResp.SessionId}
+		if !expiry.IsZero() {
+			attrs = append(attrs, "tokenTTL", time.Until(expiry).Round(time.Second).String())
+		}
+		log.Debug("stream session established", attrs...)
+	}
+
 	if hsResp.ResyncRequired {
 		c.emit(ctx, &agentv1.Event{
 			EventId: "resync-required-" + hsResp.SessionId,
@@ -315,14 +382,24 @@ func (c *ConnectClient) session(ctx context.Context) error {
 			switch agentv1.EventTypeFromString(resp.Event.Type) {
 			case agentv1.EventType_EVENT_TYPE_PING:
 				// Keepalive: answer server pings with pongs (plan §5.3).
+				// The pong is queued on sendCh so the send pump is the only
+				// goroutine calling bidi.Send — connect-go streaming clients
+				// are not safe for concurrent Send (issue #28). Pongs are
+				// droppable under saturation: the next ping re-pongs.
 				pong, perr := anypb.New(&agentv1.Pong{Time: timestamppb.Now()})
 				if perr == nil {
-					_ = bidi.Send(&agentv1.ConnectRequest{Event: &agentv1.Event{
-						EventId: "pong-" + resp.Event.EventId,
-						Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_PONG),
-						Payload: pong,
-						Time:    timestamppb.Now(),
-					}})
+					ev := &agentv1.Event{
+						EventId:  "pong-" + resp.Event.EventId,
+						Type:     agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_PONG),
+						Payload:  pong,
+						Time:     timestamppb.Now(),
+						Sequence: c.seq.Add(1),
+					}
+					select {
+					case c.sendCh <- ev:
+						streamSendQueueDepth.Set(float64(len(c.sendCh)))
+					default:
+					}
 				}
 			default:
 				c.emit(ctx, resp.Event)
@@ -339,6 +416,7 @@ func (c *ConnectClient) session(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case ev := <-c.sendCh:
+				streamSendQueueDepth.Set(float64(len(c.sendCh)))
 				if err := bidi.Send(&agentv1.ConnectRequest{Event: ev}); err != nil {
 					return
 				}
@@ -355,7 +433,9 @@ func (c *ConnectClient) session(ctx context.Context) error {
 		case err := <-recvErr:
 			return fmt.Errorf("stream: receive: %w", err)
 		case <-sendDone:
-			return errors.New("stream: send pump failed")
+			return errSendPump
+		case <-rotate:
+			return errTokenRotation
 		case <-activity:
 			if !deadman.Stop() {
 				select {
@@ -365,7 +445,7 @@ func (c *ConnectClient) session(ctx context.Context) error {
 			}
 			deadman.Reset(recvTimeout)
 		case <-deadman.C:
-			return errors.New("stream: receive timeout (keepalive dead-man switch)")
+			return errDeadman
 		}
 	}
 }
@@ -378,8 +458,26 @@ func (c *ConnectClient) session(ctx context.Context) error {
 func (c *ConnectClient) emit(ctx context.Context, ev *agentv1.Event) {
 	select {
 	case c.events <- ev:
+		streamEventsQueueDepth.Set(float64(len(c.events)))
 	case <-ctx.Done():
 	}
+}
+
+// token fetches the session token, plus its expiry when the TokenSource
+// supports it (ExpiringTokenSource). A zero expiry means "unknown".
+func (c *ConnectClient) token(ctx context.Context) (string, time.Time, error) {
+	if ts, ok := c.Token.(ExpiringTokenSource); ok {
+		return ts.TokenWithExpiry(ctx)
+	}
+	tok, err := c.Token.Token(ctx)
+	return tok, time.Time{}, err
+}
+
+func (c *ConnectClient) logger() *slog.Logger {
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
 }
 
 func checksumOf(f func() string) string {

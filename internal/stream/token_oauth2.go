@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"sync"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
@@ -24,6 +25,23 @@ type OAuth2TokenSource struct {
 
 // Token implements TokenSource.
 func (s *OAuth2TokenSource) Token(ctx context.Context) (string, error) {
+	tok, _, err := s.TokenWithExpiry(ctx)
+	return tok, err
+}
+
+// TokenWithExpiry implements ExpiringTokenSource so the stream can rotate
+// the session before the JWT expires (issue #28: Keycloak's default 300s
+// token lifespan terminates the stream on a fixed cadence when the gateway
+// enforces exp on open streams).
+func (s *OAuth2TokenSource) TokenWithExpiry(ctx context.Context) (string, time.Time, error) {
+	tok, err := s.token(ctx)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return tok.AccessToken, tok.Expiry, nil
+}
+
+func (s *OAuth2TokenSource) token(_ context.Context) (*oauth2.Token, error) {
 	s.mu.Lock()
 	if s.ts == nil {
 		cfg := clientcredentials.Config{
@@ -40,11 +58,8 @@ func (s *OAuth2TokenSource) Token(ctx context.Context) (string, error) {
 	ts := s.ts
 	s.mu.Unlock()
 
-	tok, err := ts.Token()
-	if err != nil {
-		return "", err
-	}
-	return tok.AccessToken, nil
+	return ts.Token()
 }
 
 var _ TokenSource = (*OAuth2TokenSource)(nil)
+var _ ExpiringTokenSource = (*OAuth2TokenSource)(nil)
