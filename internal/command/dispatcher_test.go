@@ -2,6 +2,8 @@ package command
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"google.golang.org/protobuf/types/known/anypb"
@@ -85,5 +87,39 @@ func TestDispatcherFailsClosedWhenDisconnected(t *testing.T) {
 	_, err := d.HandleEvent(context.Background(), commandEvent(t, "x", a, agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_INVOKE_ACTION)))
 	if err == nil {
 		t.Fatal("commands must fail closed while disconnected (plan §5.3)")
+	}
+}
+
+func TestDispatcherTransientErrorCarriesCommandID(t *testing.T) {
+	d := NewDispatcher()
+	d.Register(agentv1.EventType_EVENT_TYPE_REGISTER_ARGOCD_APP,
+		func(context.Context, *agentv1.Event) (agentv1.CommandResult, string, error) {
+			return agentv1.CommandResult_COMMAND_RESULT_UNSPECIFIED, "", fmt.Errorf("argocd: connection reset")
+		})
+	a, _ := anypb.New(&agentv1.RegisterArgoCDApp{CommandId: "cmd-transient"})
+	_, err := d.HandleEvent(context.Background(), commandEvent(t, "x", a, agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_REGISTER_ARGOCD_APP)))
+	if err == nil {
+		t.Fatal("transient handler failure must return an error")
+	}
+	var cmdErr *Error
+	if !errors.As(err, &cmdErr) {
+		t.Fatalf("transient error must be a *command.Error, got %T", err)
+	}
+	if cmdErr.CommandID != "cmd-transient" {
+		t.Errorf("CommandID = %q, want %q", cmdErr.CommandID, "cmd-transient")
+	}
+}
+
+func TestDispatcherDecodeErrorHasNoCommandID(t *testing.T) {
+	d := NewDispatcher()
+	a, _ := anypb.New(&agentv1.ApplyBundle{CommandId: "cmd-6"})
+	ev := commandEvent(t, "x", a, agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_INVOKE_ACTION))
+	_, err := d.HandleEvent(context.Background(), ev)
+	if err == nil {
+		t.Fatal("mismatched payload must fail decode")
+	}
+	var cmdErr *Error
+	if errors.As(err, &cmdErr) {
+		t.Fatalf("decode errors must not carry a command id, got %q", cmdErr.CommandID)
 	}
 }

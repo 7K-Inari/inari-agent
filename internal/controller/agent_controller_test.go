@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 
 	"github.com/7K-Inari/inari-agent/internal/capability"
+	"github.com/7K-Inari/inari-agent/internal/command"
 	"github.com/7K-Inari/inari-agent/internal/registration"
 	"github.com/7K-Inari/inari-agent/internal/stream"
 )
@@ -214,6 +216,54 @@ func TestLifecycleReplaysFullStateOnResync(t *testing.T) {
 			}
 			var upd agentv1.CapabilityUpdate
 			if err := ev.Payload.UnmarshalTo(&upd); err == nil && upd.FullSync {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+type transientFailHandler struct{ err error }
+
+func (h transientFailHandler) HandleEvent(context.Context, *agentv1.Event) (*agentv1.CommandAck, error) {
+	return nil, h.err
+}
+
+// Issue #29/#30: a transient command failure must NACK with the command_id
+// from the payload, not the event id, so the server surfaces a typed error
+// instead of an invisible timeout.
+func TestLifecycleNackCarriesCommandID(t *testing.T) {
+	fc := &fakeStreamClient{events: make(chan *agentv1.Event, 8)}
+	watcher := &fakeWatcher{ch: make(chan *agentv1.Capability)}
+	r, _ := newTestReconciler(fc, watcher)
+	r.Handler = transientFailHandler{
+		err: &command.Error{CommandID: "cmd-42", Err: errors.New("argocd: connection reset")},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Start(ctx) }()
+
+	payload, _ := anypb.New(&agentv1.RegisterArgoCDApp{CommandId: "cmd-42", Name: "app"})
+	fc.events <- &agentv1.Event{
+		EventId: "evt-xyz",
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_REGISTER_ARGOCD_APP),
+		Payload: payload,
+	}
+
+	waitFor(t, "NACK correlated by command id", func() bool {
+		for _, ev := range fc.sentEvents() {
+			if agentv1.EventTypeFromString(ev.Type) != agentv1.EventType_EVENT_TYPE_COMMAND_NACK {
+				continue
+			}
+			var ack agentv1.CommandAck
+			if err := ev.Payload.UnmarshalTo(&ack); err != nil {
+				continue
+			}
+			if ack.CommandId == "cmd-42" &&
+				ack.Result == agentv1.CommandResult_COMMAND_RESULT_FAILED &&
+				ack.Message != "" &&
+				ev.EventId == "ack-cmd-42" {
 				return true
 			}
 		}

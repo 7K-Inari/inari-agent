@@ -98,7 +98,7 @@ func (d *Dispatcher) HandleEvent(ctx context.Context, ev *agentv1.Event) (*agent
 	d.mu.Unlock()
 
 	if !d.connected.Load() {
-		return nil, fmt.Errorf("command %s: stream disconnected, failing closed", commandID)
+		return nil, &Error{CommandID: commandID, Err: fmt.Errorf("command %s: stream disconnected, failing closed", commandID)}
 	}
 
 	et := agentv1.EventTypeFromString(ev.Type)
@@ -117,7 +117,7 @@ func (d *Dispatcher) HandleEvent(ctx context.Context, ev *agentv1.Event) (*agent
 		result, message, err := handler(ctx, ev)
 		if err != nil {
 			// Transient failure: not recorded; redelivery re-executes.
-			return nil, fmt.Errorf("command %s: %w", commandID, err)
+			return nil, &Error{CommandID: commandID, Err: fmt.Errorf("command %s: %w", commandID, err)}
 		}
 		ack = &agentv1.CommandAck{CommandId: commandID, Result: result, Message: message}
 	}
@@ -128,7 +128,7 @@ func (d *Dispatcher) HandleEvent(ctx context.Context, ev *agentv1.Event) (*agent
 	d.mu.Unlock()
 	if journal != nil {
 		if err := journal.Record(ctx, ack); err != nil {
-			return nil, fmt.Errorf("command %s: journal record: %w", commandID, err)
+			return nil, &Error{CommandID: commandID, Err: fmt.Errorf("command %s: journal record: %w", commandID, err)}
 		}
 	}
 	d.handled.Add(1)
