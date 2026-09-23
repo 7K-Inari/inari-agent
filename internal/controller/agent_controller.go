@@ -137,6 +137,19 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 			return fmt.Errorf("agent lifecycle: gitops setup: %w", err)
 		}
 		streamer := r.GitOps.streamer(r.Log, r.Dynamic, client)
+		// Resend the full status snapshot on every (re)connect: the control
+		// plane may have restarted while the stream was down, and the
+		// content-dedupe would otherwise suppress the resync forever.
+		if gate, ok := handler.(interface{ SetConnected(bool) }); ok {
+			if tracker, ok := client.(interface{ SetOnConnectedChange(func(bool)) }); ok {
+				tracker.SetOnConnectedChange(func(v bool) {
+					gate.SetConnected(v)
+					if v {
+						streamer.Reset()
+					}
+				})
+			}
+		}
 		go func() { errCh <- streamer.Run(ctx) }()
 	}
 
