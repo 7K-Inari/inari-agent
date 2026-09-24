@@ -3,6 +3,7 @@ package status
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -263,3 +264,74 @@ func TestEmitDeleteStreamsMissingAndPrunes(t *testing.T) {
 		t.Fatalf("expected re-add to re-emit, got %d events", len(sender.events))
 	}
 }
+
+func appWithCondition(name, health, sync, condType, condMsg string) *unstructured.Unstructured {
+	u := app(name, health, sync)
+	u.Object["status"].(map[string]interface{})["conditions"] = []interface{}{
+		map[string]interface{}{"type": condType, "message": condMsg},
+	}
+	return u
+}
+
+func TestComparisonErrorSurfacedInMessage(t *testing.T) {
+	// ArgoCD render failures (missing CRD, unreadable repo) live in
+	// .status.conditions, not health/sync: the message must carry them so the
+	// control plane shows why delivery is stuck.
+	upd, _ := mapStatus(appWithCondition("broken-app", "Healthy", "Unknown",
+		"ComparisonError", "failed to list refs: repository not found"))
+	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_HEALTHY {
+		t.Fatalf("health = %v", upd.Health)
+	}
+	if upd.Sync != agentv1.SyncState_SYNC_STATE_ERROR {
+		t.Fatalf("sync = %v", upd.Sync)
+	}
+	if upd.Message == "" || !contains(upd.Message, "repository not found") {
+		t.Fatalf("message = %q", upd.Message)
+	}
+	// Clean apps: no condition noise.
+	upd2, _ := mapStatus(app("clean-app", "Healthy", "Synced"))
+	if upd2.Message != "all good" {
+		t.Fatalf("message = %q", upd2.Message)
+	}
+}
+
+func TestResetReEmitsSnapshot(t *testing.T) {
+	sender := &captureSender{mu: make(chan struct{}, 16)}
+	dyn := newDyn(app("my-web", "Healthy", "Synced"))
+	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Run(ctx) }()
+	defer func() {
+		cancel()
+		<-errCh
+	}()
+
+	waitEvents := func(n int) {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for len(sender.events) < n {
+			select {
+			case <-sender.mu:
+			case <-deadline:
+				t.Fatalf("want %d events, got %d", n, len(sender.events))
+			}
+		}
+	}
+	waitEvents(1) // initial snapshot
+
+	// Content-unchanged re-emit is deduped...
+	s.emit(ctx, app("my-web", "Healthy", "Synced"))
+	if len(sender.events) != 1 {
+		t.Fatalf("dedupe broken: %d events", len(sender.events))
+	}
+	// ...but after Reset (stream reconnect) the same object re-emits.
+	s.Reset()
+	s.emit(ctx, app("my-web", "Healthy", "Synced"))
+	if len(sender.events) != 2 {
+		t.Fatalf("no re-emit after Reset: %d events", len(sender.events))
+	}
+}
+
+func contains(s, sub string) bool { return strings.Contains(s, sub) }

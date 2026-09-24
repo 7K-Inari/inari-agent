@@ -66,6 +66,15 @@ func NewStreamer(log logr.Logger, dyn dynamic.Interface, sender Sender, namespac
 	}
 }
 
+// Reset clears the dedupe state so every watched object re-emits on the
+// next informer event — used on stream reconnect, where the control plane
+// may have restarted and lost the previously streamed statuses.
+func (s *Streamer) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastSum = map[string]string{}
+}
+
 // Run starts the watches and blocks until ctx is cancelled.
 func (s *Streamer) Run(ctx context.Context) error {
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(s.Dyn, 0, s.Namespace, s.TweakListOptions)
@@ -204,6 +213,14 @@ func mapStatus(u *unstructured.Unstructured) (*agentv1.StatusUpdate, string) {
 	health, hmsg := healthOf(u)
 	sync, smsg := syncOf(u)
 	msg := strings.TrimSpace(strings.Join([]string{hmsg, smsg}, " "))
+	// ArgoCD comparison/render errors (missing CRD, unreadable repo, bad
+	// manifest) live in .status.conditions, not health/sync: surface them so
+	// the control plane shows why delivery is stuck.
+	if u.GetKind() == "Application" {
+		if condMsg := comparisonErrorOf(u); condMsg != "" {
+			msg = strings.TrimSpace(msg + " " + condMsg)
+		}
+	}
 	key := fmt.Sprintf("%s/%s/%s/%s", u.GetKind(), u.GetNamespace(), u.GetName(), u.GetUID())
 	return &agentv1.StatusUpdate{
 		Resource:      ref,
@@ -213,6 +230,28 @@ func mapStatus(u *unstructured.Unstructured) (*agentv1.StatusUpdate, string) {
 		ObservedAt:    timestamppb.Now(),
 		StateChecksum: "",
 	}, key
+}
+
+// comparisonErrorOf extracts the first error-type condition message
+// (ComparisonError / SharedResourceWarning with error text) from an ArgoCD
+// Application; empty when the app renders fine.
+func comparisonErrorOf(u *unstructured.Unstructured) string {
+	conditions, found, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	if !found {
+		return ""
+	}
+	for _, c := range conditions {
+		cm, _ := c.(map[string]interface{})
+		typ, _ := cm["type"].(string)
+		if typ != "ComparisonError" && typ != "SyncError" {
+			continue
+		}
+		msg, _ := cm["message"].(string)
+		if msg != "" {
+			return typ + ": " + msg
+		}
+	}
+	return ""
 }
 
 // healthOf reads .status.health.status (Applications) or falls back to
