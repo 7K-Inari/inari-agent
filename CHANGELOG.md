@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.1](https://github.com/7K-Inari/inari-agent/compare/v0.5.0...v0.5.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **agent:** NACK transient command failures with command_id, not event id ([#31](https://github.com/7K-Inari/inari-agent/issues/31)) ([cdb0c04](https://github.com/7K-Inari/inari-agent/commit/cdb0c041cd7000221837d28e909c6f34dd29fd0e))
+* **agent:** stable stream lifecycle, app error surfacing, Applications RBAC ([#33](https://github.com/7K-Inari/inari-agent/issues/33)) ([6ae78f3](https://github.com/7K-Inari/inari-agent/commit/6ae78f3fc6053c00add15054b1689ef81bfada5b))
+* **chart:** grant configmaps access in agent Role (command journal, registration credentials) ([#25](https://github.com/7K-Inari/inari-agent/issues/25)) ([719a9ff](https://github.com/7K-Inari/inari-agent/commit/719a9ff09d02e126bd4fb6bfbad7e26444614224))
+* **stream:** keep control-plane stream long-lived ([#28](https://github.com/7K-Inari/inari-agent/issues/28)) ([#32](https://github.com/7K-Inari/inari-agent/issues/32)) ([9bff3e8](https://github.com/7K-Inari/inari-agent/commit/9bff3e866260931d729803e36f4e96128bc4e89c))
+
 ## [0.5.0](https://github.com/7K-Inari/inari-agent/compare/v0.4.3...v0.5.0) (2026-09-18)
 
 
