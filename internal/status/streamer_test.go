@@ -1,9 +1,9 @@
 package status
 
 import (
-	"strings"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
