@@ -276,14 +276,16 @@ func buildGitOps(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Int
 const defaultReadyzDisconnectGrace = 90 * time.Second
 
 // readyzDisconnectGrace reads INARI_READYZ_DISCONNECT_GRACE (Go duration),
-// falling back to the default on unset/invalid values.
+// falling back to the default on unset/invalid values. Negative durations
+// fall back too: a negative grace is never "within grace", so /readyz would
+// flap unready on every disconnect — almost certainly a config error.
 func readyzDisconnectGrace() time.Duration {
 	v := os.Getenv("INARI_READYZ_DISCONNECT_GRACE")
 	if v == "" {
 		return defaultReadyzDisconnectGrace
 	}
 	d, err := time.ParseDuration(v)
-	if err != nil {
+	if err != nil || d < 0 {
 		setupLog.Error(err, "invalid INARI_READYZ_DISCONNECT_GRACE, using default", "value", v)
 		return defaultReadyzDisconnectGrace
 	}

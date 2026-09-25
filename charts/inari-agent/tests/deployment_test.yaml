@@ -24,6 +24,14 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --leader-elect
+  - it: refuses replicas > 1 without leader election (active-active hazard)
+    set:
+      replicas: 2
+      leaderElection:
+        enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "replicas >= 2 requires leaderElection.enabled=true: without leader election both pods run the full lifecycle (active-active), and the agent has no session fencing — command execution would be duplicated"
   - it: spreads replicas when running more than one
     set:
       replicas: 2

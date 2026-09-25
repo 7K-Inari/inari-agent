@@ -1,3 +1,6 @@
+{{- if and (ge (int .Values.replicas) 2) (not .Values.leaderElection.enabled) }}
+{{- fail "replicas >= 2 requires leaderElection.enabled=true: without leader election both pods run the full lifecycle (active-active), and the agent has no session fencing — command execution would be duplicated" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

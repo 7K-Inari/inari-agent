@@ -1,6 +1,9 @@
 # Voluntary-disruption budget for the HA posture (replicas >= 2): keeps one
 # agent pod serving through node drains. Absent at the single-replica default
 # so the dev posture render matches config/default.
+{{- if and (ge (int .Values.replicas) 2) (gt (int .Values.pdb.minAvailable) (int .Values.replicas)) }}
+{{- fail "pdb.minAvailable must not exceed replicas: voluntary disruptions (node drains) would deadlock with no evictable pod" }}
+{{- end }}
 {{- if ge (int .Values.replicas) 2 }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget

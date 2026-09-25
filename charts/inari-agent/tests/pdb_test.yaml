@@ -26,6 +26,16 @@ tests:
       - equal:
           path: spec.selector.matchLabels["app.kubernetes.io/name"]
           value: inari-agent
+  - it: refuses minAvailable greater than replicas (drain deadlock)
+    set:
+      replicas: 2
+      leaderElection:
+        enabled: true
+      pdb:
+        minAvailable: 5
+    asserts:
+      - failedTemplate:
+          errorMessage: "pdb.minAvailable must not exceed replicas: voluntary disruptions (node drains) would deadlock with no evictable pod"
   - it: honors a minAvailable override
     set:
       replicas: 3
