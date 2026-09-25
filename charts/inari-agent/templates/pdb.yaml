@@ -1,0 +1,17 @@
+# Voluntary-disruption budget for the HA posture (replicas >= 2): keeps one
+# agent pod serving through node drains. Absent at the single-replica default
+# so the dev posture render matches config/default.
+{{- if ge (int .Values.replicas) 2 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: inari-agent
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "inari-agent.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inari-agent
+{{- end }}

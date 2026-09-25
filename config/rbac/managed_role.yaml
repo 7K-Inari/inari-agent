@@ -16,3 +16,8 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Leader election Lease (HA posture, --leader-elect). Full verbs:
+  # resourceNames cannot restrict create.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]

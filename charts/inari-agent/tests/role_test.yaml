@@ -1,0 +1,15 @@
+suite: namespaced Role
+templates:
+  - role.yaml
+tests:
+  - it: grants coordination.k8s.io leases for leader election
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Role
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["coordination.k8s.io"]
+            resources: ["leases"]
+            verbs: ["get", "list", "watch", "create", "update", "patch"]
