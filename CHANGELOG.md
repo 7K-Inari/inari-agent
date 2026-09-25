@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/7K-Inari/inari-agent/compare/v0.5.1...v0.6.0) (2026-09-25)
+
+
+### Features
+
+* **agent:** stream-aware /readyz with disconnect grace period ([6f39b42](https://github.com/7K-Inari/inari-agent/commit/6f39b422daa3036792dccb48826b566f486a0d62))
+* **chart:** HA active-passive posture (leader election, PDB, spread) ([1c21fa7](https://github.com/7K-Inari/inari-agent/commit/1c21fa74cd97241297a3103b397de9efe326d987))
+* HA active-passive posture (leader election, PDB, stream-aware readiness) ([ea8c068](https://github.com/7K-Inari/inari-agent/commit/ea8c0684d5dd3b055cb485be8a7109dde56737c4))
+
+
+### Bug Fixes
+
+* **chart,agent:** guard HA misconfigurations (active-active, PDB deadlock, negative grace) ([0f23f8a](https://github.com/7K-Inari/inari-agent/commit/0f23f8a88508e3d8ba7ec781c5fd3aca606ea78f))
+
 ## [0.5.1](https://github.com/7K-Inari/inari-agent/compare/v0.5.0...v0.5.1) (2026-09-24)
 
 
