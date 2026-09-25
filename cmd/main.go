@@ -28,6 +28,7 @@ import (
 	"github.com/7K-Inari/inari-agent/internal/capability"
 	"github.com/7K-Inari/inari-agent/internal/controller"
 	"github.com/7K-Inari/inari-agent/internal/git"
+	"github.com/7K-Inari/inari-agent/internal/health"
 	"github.com/7K-Inari/inari-agent/internal/registration"
 	"github.com/7K-Inari/inari-agent/internal/stream"
 )
@@ -84,11 +85,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// /readyz reflects control-plane stream connectivity: ready while
+	// connected, tolerant of disconnects shorter than the grace period so
+	// brief reconnects don't flap readiness. Standalone mode (no stream)
+	// stays ready. Liveness stays a bare ping — a process that can recover
+	// must not be restarted.
+	readiness := health.NewStreamTracker(readyzDisconnectGrace())
+	reconciler.Readiness = readiness
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+	if err := mgr.AddReadyzCheck("readyz", readiness.Check); err != nil {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
@@ -259,6 +268,26 @@ func buildGitOps(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Int
 		Timeout: 30 * time.Second,
 	}
 	return cfg, nil
+}
+
+// defaultReadyzDisconnectGrace tolerates brief control-plane partitions
+// (reconnect backoff starts at 1s; probe eviction takes ~30s at
+// periodSeconds=10) without flapping /readyz.
+const defaultReadyzDisconnectGrace = 90 * time.Second
+
+// readyzDisconnectGrace reads INARI_READYZ_DISCONNECT_GRACE (Go duration),
+// falling back to the default on unset/invalid values.
+func readyzDisconnectGrace() time.Duration {
+	v := os.Getenv("INARI_READYZ_DISCONNECT_GRACE")
+	if v == "" {
+		return defaultReadyzDisconnectGrace
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		setupLog.Error(err, "invalid INARI_READYZ_DISCONNECT_GRACE, using default", "value", v)
+		return defaultReadyzDisconnectGrace
+	}
+	return d
 }
 
 func parseLabels(in string) map[string]string {
