@@ -1,0 +1,71 @@
+suite: deployment HA posture
+templates:
+  - deployment.yaml
+tests:
+  - it: runs single-replica without leader election by default
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.template.spec.containers[0].args
+          value:
+            - --health-probe-bind-address=:8081
+            - --metrics-bind-address=:8080
+      - notExists:
+          path: spec.template.spec.affinity
+      - notExists:
+          path: spec.template.spec.topologySpreadConstraints
+  - it: passes --leader-elect when leaderElection is enabled
+    set:
+      leaderElection:
+        enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-elect
+  - it: refuses replicas > 1 without leader election (active-active hazard)
+    set:
+      replicas: 2
+      leaderElection:
+        enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "replicas >= 2 requires leaderElection.enabled=true: without leader election both pods run the full lifecycle (active-active), and the agent has no session fencing — command execution would be duplicated"
+  - it: spreads replicas when running more than one
+    set:
+      replicas: 2
+      leaderElection:
+        enabled: true
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight
+          value: 100
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey
+          value: kubernetes.io/hostname
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].topologyKey
+          value: topology.kubernetes.io/zone
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable
+          value: ScheduleAnyway
+  - it: omits the readyz grace env by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_READYZ_DISCONNECT_GRACE
+  - it: renders the readyz grace env when configured
+    set:
+      config:
+        readyzDisconnectGrace: 45s
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_READYZ_DISCONNECT_GRACE
+            value: "45s"

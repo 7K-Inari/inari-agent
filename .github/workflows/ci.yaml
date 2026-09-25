@@ -66,6 +66,24 @@ jobs:
             ghcr.io/7k-inari/inari-agent:edge-${{ github.sha }}
             ghcr.io/7k-inari/inari-agent:edge
 
+  # Chart rendering: lint (also exercises values.schema.json), the
+  # helm-unittest suite, and template smoke at both postures.
+  helm-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.22.0
+      - name: Install helm-unittest
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --version v1.1.2
+      - run: helm lint charts/inari-agent
+      - run: helm unittest charts/inari-agent
+      - name: Template smoke (default and HA postures)
+        run: |
+          helm template charts/inari-agent > /dev/null
+          helm template charts/inari-agent --set replicas=2 --set leaderElection.enabled=true > /dev/null
+
   footprint-guard:
     runs-on: ubuntu-latest
     needs: build

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "inari-agent chart values",
+  "type": "object",
+  "properties": {
+    "namespace": {
+      "type": "string",
+      "minLength": 1
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      },
+      "required": ["repository", "tag", "pullPolicy"],
+      "additionalProperties": false
+    },
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Production HA posture: 2 with leaderElection.enabled=true (active-passive only)."
+    },
+    "leaderElection": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": ["enabled"],
+      "additionalProperties": false
+    },
+    "pdb": {
+      "type": "object",
+      "properties": {
+        "minAvailable": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": ["minAvailable"],
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "registrationToken": { "type": "string" },
+        "tenantID": { "type": "string" },
+        "controlPlane": { "type": "string" },
+        "clusterLabels": { "type": "string" },
+        "helmNamespaces": { "type": "string" },
+        "readyzDisconnectGrace": {
+          "type": "string",
+          "description": "Go duration (e.g. 45s); empty uses the built-in 90s default."
+        }
+      },
+      "required": ["registrationToken", "tenantID", "controlPlane", "clusterLabels", "helmNamespaces"],
+      "additionalProperties": false
+    },
+    "oidcSecret": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "secretStore": { "type": "string" },
+        "secretStoreKind": {
+          "type": "string",
+          "enum": ["SecretStore", "ClusterSecretStore"]
+        },
+        "remotePath": { "type": "string" }
+      },
+      "required": ["create", "name", "key", "secretStore", "secretStoreKind", "remotePath"],
+      "additionalProperties": false
+    },
+    "extraEnv": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": { "type": "string" }
+        },
+        "required": ["name"],
+        "additionalProperties": true
+      }
+    },
+    "registrationReset": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "namespace",
+    "image",
+    "replicas",
+    "leaderElection",
+    "pdb",
+    "resources",
+    "serviceAccount",
+    "config",
+    "oidcSecret",
+    "extraEnv",
+    "registrationReset"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,47 @@
+suite: podDisruptionBudget
+templates:
+  - pdb.yaml
+tests:
+  - it: renders nothing at the default single replica
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: renders a PDB when running more than one replica
+    set:
+      replicas: 2
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: PodDisruptionBudget
+      - equal:
+          path: metadata.name
+          value: inari-agent
+      - equal:
+          path: metadata.namespace
+          value: inari-system
+      - equal:
+          path: spec.minAvailable
+          value: 1
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/name"]
+          value: inari-agent
+  - it: refuses minAvailable greater than replicas (drain deadlock)
+    set:
+      replicas: 2
+      leaderElection:
+        enabled: true
+      pdb:
+        minAvailable: 5
+    asserts:
+      - failedTemplate:
+          errorMessage: "pdb.minAvailable must not exceed replicas: voluntary disruptions (node drains) would deadlock with no evictable pod"
+  - it: honors a minAvailable override
+    set:
+      replicas: 3
+      pdb:
+        minAvailable: 2
+    asserts:
+      - equal:
+          path: spec.minAvailable
+          value: 2

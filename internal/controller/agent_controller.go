@@ -26,7 +26,9 @@ import (
 
 	"github.com/7K-Inari/inari-agent/internal/capability"
 	"github.com/7K-Inari/inari-agent/internal/command"
+	"github.com/7K-Inari/inari-agent/internal/health"
 	"github.com/7K-Inari/inari-agent/internal/registration"
+	"github.com/7K-Inari/inari-agent/internal/status"
 	"github.com/7K-Inari/inari-agent/internal/stream"
 )
 
@@ -46,6 +48,11 @@ type AgentReconciler struct {
 	Kube    kubernetes.Interface
 	Dynamic dynamic.Interface
 	Meta    metadata.Interface
+
+	// Readiness, when set, follows the stream's connectivity transitions for
+	// the /readyz probe (plan §5.3 HA posture). It is armed disconnected
+	// when the stream client is built; standalone mode never arms it.
+	Readiness *health.StreamTracker
 
 	// NewStreamClient builds the stream client for registered credentials.
 	// The checksum function is the aggregator's live state checksum.
@@ -117,12 +124,52 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	if handler == nil {
 		handler = command.NewDispatcher()
 	}
+
+	var streamer *status.Streamer
+	if r.GitOps != nil {
+		if err := r.GitOps.configure(ctx, handler, creds.TenantID); err != nil {
+			return fmt.Errorf("agent lifecycle: gitops setup: %w", err)
+		}
+		streamer = r.GitOps.streamer(r.Log, r.Dynamic, client)
+	}
+
 	// Fail closed until the stream is actually up: gate command handling on
-	// the connection state (plan §5.3).
+	// the connection state, feed the readiness tracker, and resend the full
+	// status snapshot on every (re)connect — the control plane may have
+	// restarted while the stream was down, and the content-dedupe would
+	// otherwise suppress the resync forever (plan §5.3). One composed
+	// callback: the client exposes a single OnConnectedChange slot.
+	var onConnectedChange func(bool)
 	if gate, ok := handler.(interface{ SetConnected(bool) }); ok {
 		gate.SetConnected(false)
+		onConnectedChange = gate.SetConnected
+	}
+	if r.Readiness != nil {
+		// Arm disconnected: the initial connect gets the grace window
+		// before /readyz flaps.
+		r.Readiness.SetConnected(false)
+		prev := onConnectedChange
+		onConnectedChange = func(v bool) {
+			r.Readiness.SetConnected(v)
+			if prev != nil {
+				prev(v)
+			}
+		}
+	}
+	if streamer != nil {
+		prev := onConnectedChange
+		onConnectedChange = func(v bool) {
+			if prev != nil {
+				prev(v)
+			}
+			if v {
+				streamer.Reset()
+			}
+		}
+	}
+	if onConnectedChange != nil {
 		if tracker, ok := client.(interface{ SetOnConnectedChange(func(bool)) }); ok {
-			tracker.SetOnConnectedChange(gate.SetConnected)
+			tracker.SetOnConnectedChange(onConnectedChange)
 		}
 	}
 
@@ -132,24 +179,7 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	errCh := make(chan error, 3)
 	go func() { errCh <- client.Run(ctx) }()
 	go func() { errCh <- aggregator.Run(ctx) }()
-	if r.GitOps != nil {
-		if err := r.GitOps.configure(ctx, handler, creds.TenantID); err != nil {
-			return fmt.Errorf("agent lifecycle: gitops setup: %w", err)
-		}
-		streamer := r.GitOps.streamer(r.Log, r.Dynamic, client)
-		// Resend the full status snapshot on every (re)connect: the control
-		// plane may have restarted while the stream was down, and the
-		// content-dedupe would otherwise suppress the resync forever.
-		if gate, ok := handler.(interface{ SetConnected(bool) }); ok {
-			if tracker, ok := client.(interface{ SetOnConnectedChange(func(bool)) }); ok {
-				tracker.SetOnConnectedChange(func(v bool) {
-					gate.SetConnected(v)
-					if v {
-						streamer.Reset()
-					}
-				})
-			}
-		}
+	if streamer != nil {
 		go func() { errCh <- streamer.Run(ctx) }()
 	}
 

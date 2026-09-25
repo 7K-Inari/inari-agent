@@ -17,6 +17,7 @@ import (
 
 	"github.com/7K-Inari/inari-agent/internal/capability"
 	"github.com/7K-Inari/inari-agent/internal/command"
+	"github.com/7K-Inari/inari-agent/internal/health"
 	"github.com/7K-Inari/inari-agent/internal/registration"
 	"github.com/7K-Inari/inari-agent/internal/stream"
 )
@@ -65,6 +66,15 @@ func (f *fakeStreamClient) SetOnConnectedChange(cb func(bool)) {
 	// deterministic (no connect/event race).
 	if !never {
 		cb(true)
+	}
+}
+
+func (f *fakeStreamClient) setConn(v bool) {
+	f.mu.Lock()
+	cb := f.onConn
+	f.mu.Unlock()
+	if cb != nil {
+		cb(v)
 	}
 }
 
@@ -269,6 +279,58 @@ func TestLifecycleNackCarriesCommandID(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// The readiness tracker arms disconnected when the stream client is built,
+// follows connection transitions, and tolerates partitions within the grace
+// period — so /readyz reflects control-plane connectivity without flapping
+// on brief reconnects (plan §5.3 HA posture).
+func TestLifecycleReadinessTracksStreamConnectivity(t *testing.T) {
+	fc := &fakeStreamClient{events: make(chan *agentv1.Event, 8), neverConnect: true}
+	watcher := &fakeWatcher{ch: make(chan *agentv1.Capability)}
+	r, _ := newTestReconciler(fc, watcher)
+	tr := health.NewStreamTracker(100 * time.Millisecond)
+	r.Readiness = tr
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = r.Start(ctx) }()
+
+	// Armed disconnected at client build: unready once the initial-connect
+	// grace expires.
+	waitFor(t, "unready while never connected past grace", func() bool { return tr.Check(nil) != nil })
+
+	// A connect restores readiness...
+	fc.setConn(true)
+	if err := tr.Check(nil); err != nil {
+		t.Fatalf("connected stream must be ready, got %v", err)
+	}
+	// ...a partition within grace does not flap...
+	fc.setConn(false)
+	if err := tr.Check(nil); err != nil {
+		t.Fatalf("partition within grace must stay ready, got %v", err)
+	}
+	// ...but a sustained partition goes unready.
+	waitFor(t, "unready after sustained partition", func() bool { return tr.Check(nil) != nil })
+}
+
+// Standalone mode (no control plane configured) never builds a stream
+// client, so the tracker stays unarmed and /readyz stays green.
+func TestStandaloneModeLeavesReadinessUnarmed(t *testing.T) {
+	tr := health.NewStreamTracker(time.Nanosecond)
+	r := &AgentReconciler{Log: logr.Discard(), Readiness: tr}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- r.Start(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := tr.Check(nil); err != nil {
+		t.Fatalf("standalone mode must stay ready, got %v", err)
+	}
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {

@@ -5,7 +5,25 @@ image:
   tag: latest
   pullPolicy: IfNotPresent
 
+# Single replica by default (dev posture). Production HA posture:
+#   replicas: 2
+#   leaderElection:
+#     enabled: true
+# ACTIVE-PASSIVE ONLY. Do NOT run active-active: the agent has no
+# session fencing and the command journal only bounds (does not
+# eliminate) double command execution; server-side fencing is handled
+# separately (inari-server).
 replicas: 1
+
+# Leader election (coordination.k8s.io Lease in the agent namespace).
+# Required for replicas > 1 so only one pod runs the lifecycle.
+leaderElection:
+  enabled: false
+
+# Rendered only when replicas >= 2 (voluntary-disruption budget for the
+# HA posture; harmless and absent in the single-replica default).
+pdb:
+  minAvailable: 1
 
 # Footprint budget (plan §5.3, §12.1/4). Enforced by CI footprint guard.
 resources:
@@ -30,6 +48,10 @@ config:
   clusterLabels: ""
   # Namespaces whose Helm release Secrets are discovered (least privilege).
   helmNamespaces: "inari-system"
+  # Optional override for INARI_READYZ_DISCONNECT_GRACE (Go duration,
+  # default 90s): how long /readyz tolerates a control-plane stream
+  # disconnect before flapping unready. Empty uses the built-in default.
+  readyzDisconnectGrace: ""
 
 # OIDC client secret delivery (plan §5.3): when enabled, renders an
 # ExternalSecret that projects the per-cluster OIDC client secret the control

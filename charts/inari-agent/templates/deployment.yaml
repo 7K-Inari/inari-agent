@@ -1,3 +1,6 @@
+{{- if and (ge (int .Values.replicas) 2) (not .Values.leaderElection.enabled) }}
+{{- fail "replicas >= 2 requires leaderElection.enabled=true: without leader election both pods run the full lifecycle (active-active), and the agent has no session fencing — command execution would be duplicated" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,6 +20,26 @@ spec:
         app.kubernetes.io/part-of: inari
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
+      {{- if ge (int .Values.replicas) 2 }}
+      # HA posture: prefer spreading pods across nodes and zones (soft
+      # constraints — a single-node cluster must still schedule).
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: inari-agent
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: inari-agent
+      {{- end }}
       securityContext:
         runAsNonRoot: true
       containers:
@@ -26,6 +49,9 @@ spec:
           args:
             - --health-probe-bind-address=:8081
             - --metrics-bind-address=:8080
+            {{- if .Values.leaderElection.enabled }}
+            - --leader-elect
+            {{- end }}
           env:
             - name: INARI_REGISTRATION_TOKEN
               value: {{ .Values.config.registrationToken | quote }}
@@ -37,6 +63,10 @@ spec:
               value: {{ .Values.config.clusterLabels | quote }}
             - name: INARI_HELM_NAMESPACES
               value: {{ .Values.config.helmNamespaces | quote }}
+            {{- with .Values.config.readyzDisconnectGrace }}
+            - name: INARI_READYZ_DISCONNECT_GRACE
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

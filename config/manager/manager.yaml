@@ -6,6 +6,9 @@ metadata:
     app.kubernetes.io/name: inari-agent
     app.kubernetes.io/part-of: inari
 spec:
+  # Single replica by default (dev posture). Production HA posture:
+  # replicas: 2 + --leader-elect arg — ACTIVE-PASSIVE ONLY (no agent-side
+  # session fencing; server-side fencing is handled in inari-server).
   replicas: 1
   selector:
     matchLabels:
