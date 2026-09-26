@@ -13,3 +13,14 @@ tests:
             apiGroups: ["coordination.k8s.io"]
             resources: ["leases"]
             verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - it: grants core events for leader-election recording
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Role
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: ["events"]
+            verbs: ["create", "patch", "update"]
