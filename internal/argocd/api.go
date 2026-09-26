@@ -32,8 +32,8 @@ type APIClient struct {
 	// Token is the static INARI_ARGOCD_API_TOKEN, used only as the explicit
 	// legacy/break-glass fallback when the command carries no
 	// user_credential_ref (no context bearer).
-	Token   string
-	HTTP    *http.Client
+	Token string
+	HTTP  *http.Client
 	// Timeout bounds each call when the command carries none.
 	Timeout time.Duration
 }
