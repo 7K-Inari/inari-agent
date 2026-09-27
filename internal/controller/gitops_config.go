@@ -69,7 +69,7 @@ func (c *GitOpsConfig) stateRepo(tenantID string) string {
 
 // configure registers the real command handlers on the dispatcher and
 // attaches the durable journal.
-func (c *GitOpsConfig) configure(ctx context.Context, handler command.Handler, tenantID string) error {
+func (c *GitOpsConfig) configure(ctx context.Context, handler command.Handler, tenantID string, redeemer command.UserCredentialRedeemer) error {
 	d, ok := handler.(*command.Dispatcher)
 	if !ok {
 		return fmt.Errorf("gitops requires the command dispatcher, got %T", handler)
@@ -108,6 +108,7 @@ func (c *GitOpsConfig) configure(ctx context.Context, handler command.Handler, t
 			Dyn:              c.Dyn,
 			Namespace:        ns,
 			ResolveNamespace: lifecycle.EnsureReady,
+			Redeemer:         redeemer,
 		}))
 	}
 	if c.JournalNamespace != "" {

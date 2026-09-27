@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -25,6 +26,10 @@ type InvokeActionDeps struct {
 	// invocation (e.g. Lifecycle.EnsureReady) so BYO-adopted installs in
 	// non-default namespaces are found.
 	ResolveNamespace func(ctx context.Context) (string, error)
+	// Redeemer exchanges InvokeAction.user_credential_ref for a per-command
+	// user ArgoCD bearer. Nil means per-user credentials are not configured:
+	// any command carrying a ref fails closed.
+	Redeemer UserCredentialRedeemer
 }
 
 // allowedActions is the M2 allow-list for tunneled imperative ops.
@@ -78,6 +83,35 @@ func InvokeActionHandler(deps InvokeActionDeps) KindHandler {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, t.AsDuration())
 			defer cancel()
+		}
+
+		// Per-user credential pass-through: redeem the opaque ref after the
+		// ownership check so one-shot refs are never consumed by out-of-scope
+		// rejects. The bearer lives only in this command's context; its TTL
+		// is bounded by the command timeout above. Terminal redemption
+		// failures are FAILED results (no redelivery); transient ones surface
+		// as handler errors for the dispatcher's normal retry path.
+		if m.UserCredentialRef != "" {
+			if deps.Redeemer == nil {
+				return agentv1.CommandResult_COMMAND_RESULT_FAILED,
+					"per-user credentials not configured on this agent; refusing user-scoped action", nil
+			}
+			bearer, _, rerr := deps.Redeemer.Redeem(ctx, m.UserCredentialRef)
+			if rerr != nil {
+				var re *RedeemError
+				if errors.As(rerr, &re) && re.Terminal() {
+					return agentv1.CommandResult_COMMAND_RESULT_FAILED, re.Error(), nil
+				}
+				return agentv1.CommandResult_COMMAND_RESULT_UNSPECIFIED, "",
+					fmt.Errorf("redeem user credential: %w", rerr)
+			}
+			if bearer == "" {
+				// An empty bearer would silently fall back to the static
+				// break-glass token; fail closed instead.
+				return agentv1.CommandResult_COMMAND_RESULT_FAILED,
+					"user credential redemption returned no token", nil
+			}
+			ctx = argocd.WithBearer(ctx, bearer)
 		}
 
 		params := map[string]any{}

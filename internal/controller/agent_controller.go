@@ -57,6 +57,11 @@ type AgentReconciler struct {
 	// NewStreamClient builds the stream client for registered credentials.
 	// The checksum function is the aggregator's live state checksum.
 	NewStreamClient func(creds *registration.Credentials, clientSecret string, checksum func() string) stream.Client
+	// NewRedeemer, when set, builds the per-command user credential redeemer
+	// (agent.v1 AgentCredentialsService) from the registered cluster
+	// identity. Nil disables per-user credentials: commands carrying a
+	// user_credential_ref fail closed.
+	NewRedeemer func(creds *registration.Credentials, clientSecret string) command.UserCredentialRedeemer
 	// NewWatchers builds the capability watchers.
 	NewWatchers func(kube kubernetes.Interface, dyn dynamic.Interface, meta metadata.Interface) []capability.Watcher
 	// Handler defaults to command.NewDispatcher().
@@ -127,7 +132,11 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 
 	var streamer *status.Streamer
 	if r.GitOps != nil {
-		if err := r.GitOps.configure(ctx, handler, creds.TenantID); err != nil {
+		var redeemer command.UserCredentialRedeemer
+		if r.NewRedeemer != nil {
+			redeemer = r.NewRedeemer(creds, clientSecret)
+		}
+		if err := r.GitOps.configure(ctx, handler, creds.TenantID, redeemer); err != nil {
 			return fmt.Errorf("agent lifecycle: gitops setup: %w", err)
 		}
 		streamer = r.GitOps.streamer(r.Log, r.Dynamic, client)

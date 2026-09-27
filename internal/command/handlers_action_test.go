@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -148,6 +149,170 @@ func TestInvokeActionRollbackParams(t *testing.T) {
 	}))
 	if err != nil || res != agentv1.CommandResult_COMMAND_RESULT_FAILED || !strings.Contains(msg, "id") {
 		t.Fatalf("rollback without id: %v %q %v", res, msg, err)
+	}
+}
+
+type fakeRedeemer struct {
+	token  string
+	err    error
+	calls  int
+	gotRef string
+}
+
+func (f *fakeRedeemer) Redeem(_ context.Context, ref string) (string, time.Time, error) {
+	f.calls++
+	f.gotRef = ref
+	if f.err != nil {
+		return "", time.Time{}, f.err
+	}
+	return f.token, time.Now().Add(time.Minute), nil
+}
+
+func TestInvokeActionRedeemsUserCredential(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	rd := &fakeRedeemer{token: "user-bearer-token"}
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), managedApp("my-web", true))
+	h := InvokeActionHandler(InvokeActionDeps{
+		API:       &argocd.APIClient{BaseURL: srv.URL, Token: "static-tok", Timeout: 5 * time.Second},
+		Dyn:       dyn,
+		Namespace: "argocd",
+		Redeemer:  rd,
+	})
+	res, msg, err := h(context.Background(), invokeEvent(t, &agentv1.InvokeAction{
+		CommandId: "c-r1", Action: "sync",
+		Resource:          &agentv1.ResourceRef{Name: "my-web"},
+		UserCredentialRef: "ref-abc",
+	}))
+	if err != nil || res != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
+		t.Fatalf("redeem path: %v %q %v", res, msg, err)
+	}
+	if rd.calls != 1 || rd.gotRef != "ref-abc" {
+		t.Fatalf("redeemer calls=%d ref=%q", rd.calls, rd.gotRef)
+	}
+	if gotAuth != "Bearer user-bearer-token" {
+		t.Fatalf("auth header %q", gotAuth)
+	}
+	if strings.Contains(msg, "user-bearer-token") {
+		t.Fatalf("ack message leaks token: %q", msg)
+	}
+}
+
+func TestInvokeActionNoRefUsesStaticToken(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	rd := &fakeRedeemer{token: "user-bearer-token"}
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), managedApp("my-web", true))
+	h := InvokeActionHandler(InvokeActionDeps{
+		API:       &argocd.APIClient{BaseURL: srv.URL, Token: "static-tok", Timeout: 5 * time.Second},
+		Dyn:       dyn,
+		Namespace: "argocd",
+		Redeemer:  rd,
+	})
+	res, _, err := h(context.Background(), invokeEvent(t, &agentv1.InvokeAction{
+		CommandId: "c-r2", Action: "refresh",
+		Resource: &agentv1.ResourceRef{Name: "my-web"},
+	}))
+	if err != nil || res != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
+		t.Fatalf("static path: %v %v", res, err)
+	}
+	if rd.calls != 0 {
+		t.Fatal("redeemer must not be called without a ref")
+	}
+	if gotAuth != "Bearer static-tok" {
+		t.Fatalf("auth header %q", gotAuth)
+	}
+}
+
+func TestInvokeActionTerminalRedeemFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"missing ref", &RedeemError{Code: RedeemNotFound}},
+		{"expired ref", &RedeemError{Code: RedeemExpired}},
+		{"already redeemed", &RedeemError{Code: RedeemAlreadyRedeemed}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), managedApp("my-web", true))
+			d := NewDispatcher()
+			d.Register(agentv1.EventType_EVENT_TYPE_INVOKE_ACTION, InvokeActionHandler(InvokeActionDeps{
+				API:       &argocd.APIClient{BaseURL: "http://127.0.0.1:1", Timeout: time.Second},
+				Dyn:       dyn,
+				Namespace: "argocd",
+				Redeemer:  &fakeRedeemer{err: tc.err},
+			}))
+			ev := invokeEvent(t, &agentv1.InvokeAction{
+				CommandId: "c-r3", Action: "sync",
+				Resource:          &agentv1.ResourceRef{Name: "my-web"},
+				UserCredentialRef: "ref-bad",
+			})
+			ack, err := d.HandleEvent(context.Background(), ev)
+			if err != nil {
+				t.Fatalf("terminal failure must not surface as error (no redelivery): %v", err)
+			}
+			if ack.Result != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+				t.Fatalf("ack %+v", ack)
+			}
+			if strings.Contains(ack.Message, "ref-bad-secret") || strings.Contains(ack.Message, "bearer") {
+				t.Fatalf("ack message leaks material: %q", ack.Message)
+			}
+			// Recorded: replay returns the same terminal ack without re-executing.
+			again, err := d.HandleEvent(context.Background(), ev)
+			if err != nil || again != ack {
+				t.Fatalf("replay: %v %v", again, err)
+			}
+		})
+	}
+}
+
+func TestInvokeActionRefWithoutRedeemerFailsClosed(t *testing.T) {
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), managedApp("my-web", true))
+	h := InvokeActionHandler(InvokeActionDeps{
+		API:       &argocd.APIClient{BaseURL: "http://127.0.0.1:1", Token: "static-tok", Timeout: time.Second},
+		Dyn:       dyn,
+		Namespace: "argocd",
+	})
+	res, msg, err := h(context.Background(), invokeEvent(t, &agentv1.InvokeAction{
+		CommandId: "c-r4", Action: "sync",
+		Resource:          &agentv1.ResourceRef{Name: "my-web"},
+		UserCredentialRef: "ref-x",
+	}))
+	if err != nil || res != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+		t.Fatalf("nil redeemer: %v %q %v", res, msg, err)
+	}
+	if !strings.Contains(msg, "not configured") {
+		t.Fatalf("message %q", msg)
+	}
+}
+
+func TestInvokeActionTransientRedeemErrorRedelivers(t *testing.T) {
+	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), managedApp("my-web", true))
+	h := InvokeActionHandler(InvokeActionDeps{
+		API:       &argocd.APIClient{BaseURL: "http://127.0.0.1:1", Timeout: time.Second},
+		Dyn:       dyn,
+		Namespace: "argocd",
+		Redeemer:  &fakeRedeemer{err: errors.New("connection refused")},
+	})
+	_, _, err := h(context.Background(), invokeEvent(t, &agentv1.InvokeAction{
+		CommandId: "c-r5", Action: "sync",
+		Resource:          &agentv1.ResourceRef{Name: "my-web"},
+		UserCredentialRef: "ref-t",
+	}))
+	if err == nil {
+		t.Fatal("transient redeem failure must surface as handler error for redelivery")
 	}
 }
 

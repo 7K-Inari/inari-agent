@@ -26,6 +26,7 @@ import (
 
 	"github.com/7K-Inari/inari-agent/internal/argocd"
 	"github.com/7K-Inari/inari-agent/internal/capability"
+	"github.com/7K-Inari/inari-agent/internal/command"
 	"github.com/7K-Inari/inari-agent/internal/controller"
 	"github.com/7K-Inari/inari-agent/internal/git"
 	"github.com/7K-Inari/inari-agent/internal/health"
@@ -197,6 +198,17 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 			}
 		}
 		return c
+	}
+	r.NewRedeemer = func(creds *registration.Credentials, clientSecret string) command.UserCredentialRedeemer {
+		return command.NewConnectRedeemer(
+			creds.ControlPlane,
+			&stream.OAuth2TokenSource{
+				TokenURL:     creds.TokenURL,
+				ClientID:     creds.ClientID,
+				ClientSecret: clientSecret,
+			},
+			nil,
+		)
 	}
 	gitOps, err := buildGitOps(context.Background(), kubeClient, dynClient)
 	if err != nil {

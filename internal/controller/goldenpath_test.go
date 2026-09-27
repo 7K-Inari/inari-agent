@@ -80,7 +80,7 @@ func TestGoldenPath(t *testing.T) {
 		JournalNamespace: "inari-system",
 	}
 	d := command.NewDispatcher()
-	if err := cfg.configure(ctx, d, "acme"); err != nil {
+	if err := cfg.configure(ctx, d, "acme", nil); err != nil {
 		t.Fatal(err)
 	}
 	d.Register(agentv1.EventType_EVENT_TYPE_REGISTER_ARGOCD_APP,

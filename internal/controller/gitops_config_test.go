@@ -26,7 +26,7 @@ func TestGitOpsConfigureRegistersHandlers(t *testing.T) {
 		// no ArgoCDAPI: invoke-action must stay unregistered (no-op accept)
 	}
 	d := command.NewDispatcher()
-	if err := cfg.configure(context.Background(), d, "acme"); err != nil {
+	if err := cfg.configure(context.Background(), d, "acme", nil); err != nil {
 		t.Fatal(err)
 	}
 
