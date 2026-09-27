@@ -102,10 +102,16 @@ func InvokeActionHandler(deps InvokeActionDeps) KindHandler {
 				if errors.As(rerr, &re) && re.Terminal() {
 					return agentv1.CommandResult_COMMAND_RESULT_FAILED, re.Error(), nil
 				}
-				return agentv1.CommandResult_COMMAND_RESULT_UNSPECIFIED, "",
-					fmt.Errorf("redeem user credential: %w", rerr)
-			}
-			ctx = argocd.WithBearer(ctx, bearer)
+			return agentv1.CommandResult_COMMAND_RESULT_UNSPECIFIED, "",
+				fmt.Errorf("redeem user credential: %w", rerr)
+		}
+		if bearer == "" {
+			// An empty bearer would silently fall back to the static
+			// break-glass token; fail closed instead.
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED,
+				"user credential redemption returned no token", nil
+		}
+		ctx = argocd.WithBearer(ctx, bearer)
 		}
 
 		params := map[string]any{}
