@@ -1,10 +1,13 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -46,6 +49,8 @@ type fakeGateway struct {
 	gotAuth      []string
 	gotEvents    []*agentv1.Event
 	resyncNeeded bool
+	// desiredVersion is advertised as HandshakeResponse.desired_agent_version.
+	desiredVersion string
 	// closeFirstAfter closes the first stream after this long (partition
 	// simulation); later connections stay open.
 	closeFirstAfter time.Duration
@@ -141,6 +146,7 @@ func (f *fakeGateway) handle(send func(*agentv1.ConnectResponse) error, pingDone
 			SessionId:              "session-1",
 			ServerContractVersions: "inari.agent.v1",
 			ResyncRequired:         f.resyncNeeded,
+			DesiredAgentVersion:    f.desiredVersion,
 		})
 		_ = send(&agentv1.ConnectResponse{Event: &agentv1.Event{
 			EventId: "srv-handshake",
@@ -236,6 +242,42 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+func TestDesiredAgentVersionMismatchLogsWarning(t *testing.T) {
+	gw := &fakeGateway{desiredVersion: "0.5.1"}
+	var logBuf bytes.Buffer
+	c := newTestClient(t, gw, func(c *ConnectClient) {
+		c.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	waitFor(t, "upgrade warning", func() bool {
+		return strings.Contains(logBuf.String(), "agent upgrade available")
+	})
+	if !strings.Contains(logBuf.String(), "0.5.1") {
+		t.Errorf("warning must name the recommended version, got: %s", logBuf.String())
+	}
+}
+
+func TestDesiredAgentVersionMatchLogsNoWarning(t *testing.T) {
+	gw := &fakeGateway{desiredVersion: "0.1.0-test"} // matches newTestClient's AgentVersion
+	var logBuf bytes.Buffer
+	c := newTestClient(t, gw, func(c *ConnectClient) {
+		c.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	waitFor(t, "handshake", func() bool { return gw.connectCount() >= 1 })
+	// Give the handshake path a moment to (not) log.
+	time.Sleep(50 * time.Millisecond)
+	if strings.Contains(logBuf.String(), "agent upgrade available") {
+		t.Errorf("matching version must not warn, got: %s", logBuf.String())
+	}
 }
 
 func TestHandshakeCarriesAuthTenantAndChecksum(t *testing.T) {
