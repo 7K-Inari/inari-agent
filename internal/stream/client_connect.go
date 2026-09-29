@@ -348,6 +348,12 @@ func (c *ConnectClient) session(ctx context.Context) error {
 	if err := first.Event.Payload.UnmarshalTo(&hsResp); err != nil {
 		return &handshakeError{fmt.Errorf("stream: decode handshake response: %w", err)}
 	}
+	if hsResp.DesiredAgentVersion != "" && c.AgentVersion != "" && hsResp.DesiredAgentVersion != c.AgentVersion {
+		if log := c.logger(); log != nil {
+			log.Warn("agent upgrade available: platform recommends a different agent version",
+				"running", c.AgentVersion, "recommended", hsResp.DesiredAgentVersion)
+		}
+	}
 	c.setConnected(true)
 
 	// Rotate the session shortly before the JWT expires: gateways that

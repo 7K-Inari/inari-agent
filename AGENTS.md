@@ -16,7 +16,7 @@ Stack: Go, controller-runtime / kubebuilder
 
 ## Conventions
 - Conventional Commits; SemVer releases; container images/artifacts cosign-signed (once CI exists).
-- Releases are automated via release-please in PR-only mode (see docs/release.md): `release-please.yml` opens/updates the Release PR on push to main (version bump + CHANGELOG.md, nothing else) → maintainer merges → `release.yml` creates tag `vX.Y.Z` + GitHub Release and runs publish (GHCR image + cosign/SBOM/SLSA, install manifest, Helm chart OCI). Never hand-create tags/Releases or edit the manifest. Per-commit edge images stay in `ci.yaml`.
+- Releases are automated via release-please in PR-only mode (see docs/release.md): `release-please.yml` opens/updates the Release PR on push to main (version bump + CHANGELOG.md, nothing else) → maintainer merges → `release.yml` creates tag `vX.Y.Z` + GitHub Release and runs publish (GHCR image + cosign/SBOM/SLSA, install manifest, Helm chart OCI). Never hand-create tags/Releases or edit the manifest. Edge releases live in `edge.yml`: every merge to main tags the image `<pending>-<shortsha>` (plus `:edge`/`:edge-<sha>`) and cuts a GitHub prerelease (skipped on release merges; pending version via `scripts/resolve-edge-version.sh`).
 - Write tests for new behavior; keep changes minimal and focused.
 - Canonical architecture & development plan: https://github.com/7K-Inari/inari-docs/blob/main/docs/architecture/inari-platform-plan.md (section references below point into it).
 
