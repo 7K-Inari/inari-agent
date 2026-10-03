@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.0](https://github.com/7K-Inari/inari-agent/compare/v0.5.1...v0.6.0) (2026-10-03)
+
+
+### Features
+
+* **agent:** stream-aware /readyz with disconnect grace period ([6f39b42](https://github.com/7K-Inari/inari-agent/commit/6f39b422daa3036792dccb48826b566f486a0d62))
+* **chart:** HA active-passive posture (leader election, PDB, spread) ([1c21fa7](https://github.com/7K-Inari/inari-agent/commit/1c21fa74cd97241297a3103b397de9efe326d987))
+* **command:** W2 agent credential redemption and per-command ArgoCD bearer ([#37](https://github.com/7K-Inari/inari-agent/issues/37)) ([20684b7](https://github.com/7K-Inari/inari-agent/commit/20684b7d707431c33585865a94b7373c8bddc1db))
+* HA active-passive posture (leader election, PDB, stream-aware readiness) ([ea8c068](https://github.com/7K-Inari/inari-agent/commit/ea8c0684d5dd3b055cb485be8a7109dde56737c4))
+* **release:** per-merge edge releases (vX.Y.Z-&lt;sha&gt; + moving edge channel) ([#38](https://github.com/7K-Inari/inari-agent/issues/38)) ([aa70d82](https://github.com/7K-Inari/inari-agent/commit/aa70d82086a423c6ea0fdb418e23c6a16bb0bc68))
+* **tunnelagent:** in-cluster kubectl tunnel relay binary + chart (plan §8) ([#49](https://github.com/7K-Inari/inari-agent/issues/49)) ([99217e7](https://github.com/7K-Inari/inari-agent/commit/99217e7de3dcbe318213cda754c4520c6fd57b00))
+
+
+### Bug Fixes
+
+* **agent:** grant events RBAC for leader-election recording ([7bce302](https://github.com/7K-Inari/inari-agent/commit/7bce30204b9d1040a1a69870362e1660d51ca424))
+* **agent:** grant events RBAC for leader-election recording ([b23a862](https://github.com/7K-Inari/inari-agent/commit/b23a8625d469c86306a9cfa44783fe71f4e02cd5))
+* **chart,agent:** guard HA misconfigurations (active-active, PDB deadlock, negative grace) ([0f23f8a](https://github.com/7K-Inari/inari-agent/commit/0f23f8a88508e3d8ba7ec781c5fd3aca606ea78f))
+
 ## [0.5.1](https://github.com/7K-Inari/inari-agent/compare/v0.5.0...v0.5.1) (2026-09-24)
 
 
