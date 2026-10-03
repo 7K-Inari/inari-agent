@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	connectrpc.com/connect v1.21.0
-	github.com/7K-Inari/inari-api v0.6.1-0.20261002221315-be05a1dc050d
+	github.com/7K-Inari/inari-api v0.6.1-0.20261003004546-25e482f0464f
 	github.com/go-git/go-billy/v5 v5.9.1
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-logr/logr v1.4.4

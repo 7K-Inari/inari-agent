@@ -8,6 +8,8 @@ github.com/7K-Inari/inari-api v0.6.1-0.20260929125831-bb8d0a69fd0e h1:y56HkoFB/7
 github.com/7K-Inari/inari-api v0.6.1-0.20260929125831-bb8d0a69fd0e/go.mod h1:+74y2AihE0BCqM4L2G6AIjN+pu5C88YhW8wFKf7JmmA=
 github.com/7K-Inari/inari-api v0.6.1-0.20261002221315-be05a1dc050d h1:JbnIarv+d7eOapSTfObwgns9rwNgO56ExYMJ0QQpAOg=
 github.com/7K-Inari/inari-api v0.6.1-0.20261002221315-be05a1dc050d/go.mod h1:g+ch3vg8tZejuu5l35SVzfo0qD7eUVWdyA0eGpXhPww=
+github.com/7K-Inari/inari-api v0.6.1-0.20261003004546-25e482f0464f h1:RM2kAQe4EiM0ITKfv0twsKMCKRv6i6xO4f6l9YMLE4A=
+github.com/7K-Inari/inari-api v0.6.1-0.20261003004546-25e482f0464f/go.mod h1:yeF6psU8FkaFVPOqKxe3rzClCW9QXm0mIenEWgYhR3A=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/Microsoft/go-winio v0.5.2/go.mod h1:WpS1mjBmmwHBEWmogvA2mj8546UReBk4v8QkMxJ6pZY=
