@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	tunnelv1 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1"
@@ -51,6 +52,12 @@ type Relay struct {
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
 	Logger *slog.Logger
+
+	// The non-upgrade client is built once and shared: a fresh Transport
+	// per request would never reuse connections and its idle conns would
+	// never be reaped (FD leak under kubectl list bursts).
+	clientOnce   sync.Once
+	sharedClient *http.Client
 }
 
 // Result is the apiserver response head plus its body stream.
@@ -200,19 +207,23 @@ func (r *Relay) httpClient() *http.Client {
 	if r.Client != nil {
 		return r.Client
 	}
-	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig:     r.TLSConfig,
-			DisableCompression:  true,
-			ForceAttemptHTTP2:   false, // watch/upgrade semantics stay HTTP/1.1
-			MaxIdleConnsPerHost: 8,
-		},
-		// The apiserver does not redirect; pass any redirect response
-		// through to the hub verbatim instead of following it.
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	r.clientOnce.Do(func() {
+		r.sharedClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig:     r.TLSConfig,
+				DisableCompression:  true,
+				ForceAttemptHTTP2:   false, // watch/upgrade semantics stay HTTP/1.1
+				MaxIdleConnsPerHost: 8,
+				IdleConnTimeout:     90 * time.Second,
+			},
+			// The apiserver does not redirect; pass any redirect response
+			// through to the hub verbatim instead of following it.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	})
+	return r.sharedClient
 }
 
 // rawConnReader reads upgraded socket bytes; the bufio.Reader must be used
