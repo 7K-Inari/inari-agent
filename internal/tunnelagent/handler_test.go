@@ -136,6 +136,46 @@ func TestHandlerInboundFramesAndHalfClose(t *testing.T) {
 	}, "Close after half-close")
 }
 
+// A stalled consumer (apiserver never reads the request body) must not
+// block the receive loop: once the per-connection inbound queue fills, the
+// handler terminates just that connection.
+func TestHandlerInboundQueueOverflow(t *testing.T) {
+	cap := &capture{}
+	h := NewHandler(&stubDoer{t: t, respond: func(open *tunnelv1.TunnelOpen, body io.Reader) (*Result, error) {
+		pr, _ := io.Pipe() // response body never produces bytes either
+		return &Result{Status: 200, Body: pr}, nil
+	}})
+	h.SetSend(cap.send)
+
+	h.Handle(&tunnelv1.TunnelMessage{ConnectionId: "ov", Payload: &tunnelv1.TunnelMessage_Open{
+		Open: &tunnelv1.TunnelOpen{Method: "POST", Path: "/api/v1/namespaces"},
+	}})
+	cap.waitFor(t, func(m *tunnelv1.TunnelMessage) bool {
+		return m.GetConnectionId() == "ov" && m.GetOpenResult() != nil
+	}, "OpenResult")
+
+	// The relay never reads the body: the pump blocks on the first frame
+	// and the queue (cap 64) fills; one more frame overflows it.
+	for i := 0; i < 128; i++ {
+		h.Handle(&tunnelv1.TunnelMessage{ConnectionId: "ov", Payload: &tunnelv1.TunnelMessage_Frame{
+			Frame: &tunnelv1.TunnelFrame{Data: []byte("x")},
+		}})
+	}
+
+	cls := cap.waitFor(t, func(m *tunnelv1.TunnelMessage) bool {
+		return m.GetConnectionId() == "ov" && m.GetClose() != nil
+	}, "inbound-overflow Close")
+	if cls.GetClose().GetReason() != "inbound-overflow" {
+		t.Errorf("close reason = %q", cls.GetClose().GetReason())
+	}
+	// Handle must keep accepting messages for other connections (receive
+	// loop was never blocked).
+	h.Handle(openMsg("other"))
+	cap.waitFor(t, func(m *tunnelv1.TunnelMessage) bool {
+		return m.GetConnectionId() == "other" && m.GetOpenResult() != nil
+	}, "OpenResult for other conn")
+}
+
 func TestHandlerByteCap(t *testing.T) {
 	cap := &capture{}
 	big := strings.Repeat("x", 4096)

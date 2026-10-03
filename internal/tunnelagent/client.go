@@ -117,13 +117,7 @@ func (c *Client) session(ctx context.Context) error {
 	if httpClient == nil {
 		httpClient = stream.DefaultHTTPClient(c.Address)
 	}
-	auth := connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
-		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-			req.Header().Set("Authorization", "Bearer "+token)
-			return next(ctx, req)
-		}
-	}))
-	svc := tunnelv1connect.NewTunnelServiceClient(httpClient, c.Address, auth)
+	svc := tunnelv1connect.NewTunnelServiceClient(httpClient, c.Address)
 	bidi := svc.Connect(ctx)
 	bidi.RequestHeader().Set("Authorization", "Bearer "+token)
 

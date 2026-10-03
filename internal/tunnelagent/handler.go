@@ -138,6 +138,15 @@ func (h *Handler) deliverFrame(id string, f *tunnelv1.TunnelFrame) {
 	select {
 	case cs.in <- f:
 	case <-cs.done:
+	default:
+		// Slow consumer (apiserver not reading the request body): blocking
+		// here would stall the stream's single receive loop for every
+		// other connection — terminate this connection instead.
+		h.logger().Warn("inbound frame queue full, closing connection", "connID", id)
+		h.send(cs, &tunnelv1.TunnelMessage{ConnectionId: id, Payload: &tunnelv1.TunnelMessage_Close{
+			Close: &tunnelv1.TunnelClose{Reason: "inbound-overflow"},
+		}})
+		cs.cancel()
 	}
 }
 
