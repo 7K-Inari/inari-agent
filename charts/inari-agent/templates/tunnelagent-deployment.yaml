@@ -1,0 +1,93 @@
+{{- if .Values.kubectlTunnel.enabled }}
+# Kubectl tunnel relay (plan §8): dedicated Deployment running the
+# inari-tunnel-agent binary from the same image. Single replica — the hub
+# treats each stream independently and reconnects are cheap.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inari-tunnel-agent
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "inari-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tunnel-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inari-tunnel-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: inari-tunnel-agent
+        app.kubernetes.io/part-of: inari
+        app.kubernetes.io/component: tunnel-agent
+    spec:
+      serviceAccountName: inari-tunnel-agent
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: tunnel-agent
+          image: "{{ .Values.image.repository }}:{{ .Values.kubectlTunnel.image.tag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/inari-tunnel-agent"]
+          env:
+            - name: INARI_KUBEPROXY_URL
+              value: {{ .Values.kubectlTunnel.kubeproxyURL | quote }}
+            - name: INARI_CLUSTER_ID
+              value: {{ .Values.kubectlTunnel.clusterID | quote }}
+            {{- with .Values.kubectlTunnel.oidcIssuer }}
+            - name: INARI_OIDC_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.kubectlTunnel.oidcTokenURL }}
+            - name: INARI_OIDC_TOKEN_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.kubectlTunnel.clientID }}
+            - name: INARI_CLIENT_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.kubectlTunnel.apiserverURL }}
+            - name: INARI_APISERVER_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.kubectlTunnel.pingInterval }}
+            - name: INARI_TUNNEL_PING_INTERVAL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.kubectlTunnel.maxConnBytes }}
+            - name: INARI_TUNNEL_MAX_CONN_BYTES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.kubectlTunnel.maxConnLifetime }}
+            - name: INARI_TUNNEL_MAX_CONN_LIFETIME
+              value: {{ . | quote }}
+            {{- end }}
+            - name: INARI_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kubectlTunnel.secret.name }}
+                  key: {{ .Values.kubectlTunnel.secret.key }}
+          ports:
+            - name: health
+              containerPort: 8082
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.kubectlTunnel.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+{{- end }}

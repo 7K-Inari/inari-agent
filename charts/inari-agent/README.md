@@ -35,6 +35,25 @@ don't flap (standalone mode — no control plane configured — stays ready).
 Liveness (`/healthz`) is a bare ping. Tune the grace period with
 `config.readyzDisconnectGrace` (Go duration, built-in default `90s`).
 
+## Kubectl tunnel agent (plan §8)
+
+The chart also renders `inari-tunnel-agent`: a dedicated Deployment running
+the second binary in the same image (`command: ["/inari-tunnel-agent"]`).
+It dials out to inari-kubeproxy and relays proxied kubectl traffic to the
+tenant apiserver using hub-minted `Impersonate-*` headers — pull, never
+push.
+
+Its ServiceAccount (`inari-tunnel-agent`) holds exactly three rules —
+`impersonate` on `users`, `groups`, `uids` — and nothing else. Never merge
+this into the inari-agent SA.
+
+Set `kubectlTunnel.enabled: false` to skip all tunnel resources. The
+`tunnel-<cluster-id>` client secret is consumed from the Secret named by
+`kubectlTunnel.secret.name/key`; optionally project it via ESO with
+`kubectlTunnel.oidcSecret.create` (mirrors the top-level `oidcSecret`
+pattern). `kubectlTunnel.kubeproxyURL`, `clusterID`, and
+`oidcIssuer`/`oidcTokenURL` configure the dial-out.
+
 ## Values
 
 See `values.yaml` for the commented key reference; `values.schema.json`

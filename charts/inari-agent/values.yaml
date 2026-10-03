@@ -76,3 +76,57 @@ extraEnv: []
 # One-shot control-plane reset for the persisted registration ConfigMap
 # (renders a PreSync patch Job). Flip back to false after it succeeds.
 registrationReset: false
+
+# Kubectl tunnel relay (plan §8): the in-cluster agent that dials out to
+# inari-kubeproxy and relays proxied kubectl traffic to the tenant
+# apiserver via hub-minted Impersonate-* headers. Runs as a dedicated
+# binary/Deployment with its own ServiceAccount holding ONLY the
+# impersonate verb — never merged into the inari-agent SA. Footprint is
+# deliberately small: it is a thin byte relay (the 100m/128Mi CI guard
+# applies per Deployment).
+kubectlTunnel:
+  enabled: true
+  # Kubeproxy base URL the tunnel agent dials (pull, never push).
+  # Required for the tunnel to function; the pod fails fast when empty.
+  kubeproxyURL: ""
+  # Cluster identifier (logging; the cluster_id claim itself is hardcoded
+  # in the tunnel client's JWT).
+  clusterID: ""
+  # Keycloak issuer for the tunnel-<cluster-id> client; the token URL is
+  # derived as {oidcIssuer}/protocol/openid-connect/token unless
+  # oidcTokenURL is set explicitly.
+  oidcIssuer: ""
+  oidcTokenURL: ""
+  # OIDC client ID; empty derives tunnel-<clusterID>.
+  clientID: ""
+  # Apiserver override; empty uses https://kubernetes.default.svc.
+  apiserverURL: ""
+  # Session keepalive (Go duration, default 30s).
+  pingInterval: ""
+  # Per-connection byte cap in bytes (default 1GiB; no windowing in v1).
+  maxConnBytes: ""
+  # Per-connection lifetime cap (Go duration, default 60m = hub reaper).
+  maxConnLifetime: ""
+  image:
+    # Empty inherits the top-level image.tag (same image, second binary).
+    tag: ""
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
+  # ESO-delivered tunnel client secret (client-credentials for the
+  # tunnel-<cluster-id> Keycloak client) consumed as env vars.
+  secret:
+    name: inari-tunnel-agent-oidc-client
+    key: client-secret
+  # Optional ExternalSecret projecting the tunnel client secret; mirrors
+  # the top-level oidcSecret pattern (opt-in for ESO-less clusters).
+  oidcSecret:
+    create: false
+    secretStore: ""
+    secretStoreKind: ClusterSecretStore
+    # Vault path, e.g. inari/clusters/<cluster-id>/tunnel-client-secret.
+    remotePath: ""

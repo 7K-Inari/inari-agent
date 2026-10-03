@@ -13,6 +13,7 @@ Stack: Go, controller-runtime / kubebuilder
 - Brownfield default: pre-existing resources are **observe-only** unless explicitly adopted (§5.3, §11/3).
 - Agent RBAC: dedicated tenant-scoped ServiceAccount; watches read-only; mutations limited to Inari-managed namespaces/resources (§5.3).
 - Protocol protos come from the `inari-api` repo — pin its versioned packages (§6).
+- Second binary: `cmd/inari-tunnel-agent` (kubectl tunnel relay, plan §8) dials out to inari-kubeproxy and relays to the tenant apiserver with hub-minted `Impersonate-*` headers; its SA holds only `impersonate` on users/groups/uids — **never merge** that grant into the inari-agent SA. Same image, `command: ["/inari-tunnel-agent"]` in the tunnel Deployment.
 
 ## Conventions
 - Conventional Commits; SemVer releases; container images/artifacts cosign-signed (once CI exists).
