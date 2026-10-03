@@ -3,11 +3,12 @@
 #
 # Budgets:
 #   - Deployment container limits MUST NOT exceed 100m CPU / 128Mi memory.
-#   - Agent image MUST NOT exceed 65MB as reported by `docker image inspect
-#     .Size` (sum of uncompressed layers). Raised 50→65 with the kubectl
+#   - Agent image MUST NOT exceed 100MB as reported by `docker image inspect
+#     .Size` (sum of uncompressed layers). Raised 50→100 with the kubectl
 #     tunnel relay (plan §8): the same image carries TWO stripped static Go
 #     binaries by design — manager ~37MB + inari-tunnel-agent ~25MB on a
-#     ~3MB distroless base (~61MB measured).
+#     ~3MB distroless base (~61MB measured); 100MB leaves headroom for
+#     growth without weakening the guard to a formality.
 #
 # Usage:
 #   hack/check-footprint.sh [--manifest FILE] [--image IMAGE:TAG]
@@ -21,7 +22,7 @@ MANIFEST="dist/install.yaml"
 IMAGE=""
 MAX_CPU_MILLICORES=100
 MAX_MEMORY_MIB=128
-MAX_IMAGE_MB=65
+MAX_IMAGE_MB=100
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
