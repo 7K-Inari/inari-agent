@@ -4,16 +4,15 @@ go 1.26.3
 
 require (
 	connectrpc.com/connect v1.21.0
-	github.com/7K-Inari/inari-api v0.6.1-0.20261002221315-be05a1dc050d
+	github.com/7K-Inari/inari-api v0.6.1-0.20261003055153-3d2f7dc46ca7
 	github.com/go-git/go-billy/v5 v5.9.1
 	github.com/go-git/go-git/v5 v5.19.2
 	github.com/go-logr/logr v1.4.4
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-github/v68 v68.0.0
-	github.com/google/go-github/v92 v92.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/prometheus/client_golang v1.23.2
-	golang.org/x/net v0.58.0
+	golang.org/x/net v0.59.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/protobuf v1.36.12
 	k8s.io/api v0.36.3
@@ -72,11 +71,11 @@ require (
 	go.uber.org/zap v1.27.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
