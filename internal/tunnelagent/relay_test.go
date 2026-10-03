@@ -43,7 +43,7 @@ func TestRelayPassesImpersonationAndSAToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if gotAuth != "Bearer sa-token-123" {
 		t.Errorf("Authorization = %q, want SA token", gotAuth)
@@ -87,7 +87,7 @@ func TestRelayRequestBodyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 	if res.Status != 201 {
 		t.Errorf("status = %d", res.Status)
 	}
@@ -111,7 +111,7 @@ func TestRelayUpgradePassthrough(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		br := bufio.NewReader(conn)
 		req, err := http.ReadRequest(br)
 		if err != nil {
@@ -145,7 +145,7 @@ func TestRelayUpgradePassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.Status != http.StatusSwitchingProtocols {
 		t.Fatalf("status = %d, want 101", res.Status)
@@ -185,7 +185,7 @@ func TestRelayUpgradeRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.Status != http.StatusBadRequest {
 		t.Errorf("status = %d", res.Status)
 	}

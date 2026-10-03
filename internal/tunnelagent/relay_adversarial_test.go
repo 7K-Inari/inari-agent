@@ -59,7 +59,7 @@ func TestRelayUpgradeOverTLS(t *testing.T) {
 			t.Errorf("hijack: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_, _ = conn.Write([]byte("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"))
 		_, _ = io.Copy(conn, br)
 	}))
@@ -81,7 +81,7 @@ func TestRelayUpgradeOverTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.Status != http.StatusSwitchingProtocols {
 		t.Fatalf("status = %d, want 101", res.Status)
 	}
