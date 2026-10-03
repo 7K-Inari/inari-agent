@@ -1,0 +1,152 @@
+suite: kubectl tunnel agent (plan §8)
+templates:
+  - tunnelagent-deployment.yaml
+  - tunnelagent-rbac.yaml
+tests:
+  - it: renders Deployment, SA, ClusterRole, and ClusterRoleBinding by default
+    asserts:
+      - hasDocuments:
+          count: 1
+        template: tunnelagent-deployment.yaml
+      - hasDocuments:
+          count: 3
+        template: tunnelagent-rbac.yaml
+      - isKind:
+          of: Deployment
+        template: tunnelagent-deployment.yaml
+      - isAPIVersion:
+          of: apps/v1
+        template: tunnelagent-deployment.yaml
+      - equal:
+          path: metadata.name
+          value: inari-tunnel-agent
+        template: tunnelagent-deployment.yaml
+      - isKind:
+          of: ServiceAccount
+        template: tunnelagent-rbac.yaml
+        documentIndex: 0
+      - isKind:
+          of: ClusterRole
+        template: tunnelagent-rbac.yaml
+        documentIndex: 1
+      - isKind:
+          of: ClusterRoleBinding
+        template: tunnelagent-rbac.yaml
+        documentIndex: 2
+
+  - it: renders nothing when kubectlTunnel.enabled=false
+    set:
+      kubectlTunnel:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: runs the inari-tunnel-agent binary on the dedicated SA
+    asserts:
+      - equal:
+          path: spec.template.spec.serviceAccountName
+          value: inari-tunnel-agent
+        documentSelector:
+          path: kind
+          value: Deployment
+      - equal:
+          path: spec.template.spec.containers[0].command
+          value: ["/inari-tunnel-agent"]
+        documentSelector:
+          path: kind
+          value: Deployment
+      - equal:
+          path: spec.replicas
+          value: 1
+        documentSelector:
+          path: kind
+          value: Deployment
+
+  - it: wires kubeproxy/cluster env and consumes the ESO-delivered client secret
+    set:
+      kubectlTunnel:
+        kubeproxyURL: "https://kubeproxy.inari.example.com"
+        clusterID: "cluster-9"
+        oidcIssuer: "https://keycloak.example.com/realms/tenant"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_KUBEPROXY_URL
+            value: "https://kubeproxy.inari.example.com"
+        documentSelector:
+          path: kind
+          value: Deployment
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_CLUSTER_ID
+            value: "cluster-9"
+        documentSelector:
+          path: kind
+          value: Deployment
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_OIDC_ISSUER
+            value: "https://keycloak.example.com/realms/tenant"
+        documentSelector:
+          path: kind
+          value: Deployment
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: inari-tunnel-agent-oidc-client
+                key: client-secret
+        documentSelector:
+          path: kind
+          value: Deployment
+
+  - it: grants exactly the three impersonate rules and nothing else
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: ["users"]
+              verbs: ["impersonate"]
+            - apiGroups: [""]
+              resources: ["groups"]
+              verbs: ["impersonate"]
+            - apiGroups: [""]
+              resources: ["uids"]
+              verbs: ["impersonate"]
+        documentSelector:
+          path: kind
+          value: ClusterRole
+      - equal:
+          path: subjects[0].name
+          value: inari-tunnel-agent
+        documentSelector:
+          path: kind
+          value: ClusterRoleBinding
+      - equal:
+          path: roleRef.name
+          value: inari-tunnel-agent
+        documentSelector:
+          path: kind
+          value: ClusterRoleBinding
+
+  - it: keeps the thin-relay footprint budget
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources
+          value:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+        documentSelector:
+          path: kind
+          value: Deployment

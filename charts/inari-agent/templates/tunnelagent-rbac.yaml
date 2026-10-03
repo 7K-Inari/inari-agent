@@ -1,0 +1,48 @@
+{{- if .Values.kubectlTunnel.enabled }}
+# Tunnel-agent RBAC (plan §8): a dedicated ServiceAccount whose ONLY grant
+# is the impersonate verb on users/groups/uids, so the hub-minted
+# Impersonate-* headers it attaches are the entirety of its privilege.
+# Never merge these into the inari-agent SA.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: inari-tunnel-agent
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "inari-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tunnel-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: inari-tunnel-agent
+  labels:
+    {{- include "inari-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tunnel-agent
+rules:
+  - apiGroups: [""]
+    resources: ["users"]
+    verbs: ["impersonate"]
+  - apiGroups: [""]
+    resources: ["groups"]
+    verbs: ["impersonate"]
+  - apiGroups: [""]
+    resources: ["uids"]
+    verbs: ["impersonate"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: inari-tunnel-agent
+  labels:
+    {{- include "inari-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tunnel-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: inari-tunnel-agent
+subjects:
+  - kind: ServiceAccount
+    name: inari-tunnel-agent
+    namespace: {{ .Values.namespace }}
+{{- end }}

@@ -140,6 +140,79 @@
     },
     "registrationReset": {
       "type": "boolean"
+    },
+    "kubectlTunnel": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "kubeproxyURL": { "type": "string" },
+        "clusterID": { "type": "string" },
+        "oidcIssuer": { "type": "string" },
+        "oidcTokenURL": { "type": "string" },
+        "clientID": { "type": "string" },
+        "apiserverURL": { "type": "string" },
+        "pingInterval": { "type": "string" },
+        "maxConnBytes": { "type": "string" },
+        "maxConnLifetime": { "type": "string" },
+        "image": {
+          "type": "object",
+          "properties": {
+            "tag": { "type": "string" }
+          },
+          "required": ["tag"],
+          "additionalProperties": false
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "secret": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["name", "key"],
+          "additionalProperties": false
+        },
+        "oidcSecret": {
+          "type": "object",
+          "properties": {
+            "create": { "type": "boolean" },
+            "secretStore": { "type": "string" },
+            "secretStoreKind": {
+              "type": "string",
+              "enum": ["SecretStore", "ClusterSecretStore"]
+            },
+            "remotePath": { "type": "string" }
+          },
+          "required": ["create", "secretStore", "secretStoreKind", "remotePath"],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "enabled",
+        "kubeproxyURL",
+        "clusterID",
+        "oidcIssuer",
+        "oidcTokenURL",
+        "clientID",
+        "apiserverURL",
+        "pingInterval",
+        "maxConnBytes",
+        "maxConnLifetime",
+        "image",
+        "resources",
+        "secret",
+        "oidcSecret"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -153,7 +226,8 @@
     "config",
     "oidcSecret",
     "extraEnv",
-    "registrationReset"
+    "registrationReset",
+    "kubectlTunnel"
   ],
   "additionalProperties": false
 }
