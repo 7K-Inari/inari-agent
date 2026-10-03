@@ -105,11 +105,19 @@ func run() error {
 		"kubeproxy", cfg.kubeproxyURL,
 		"apiserver", cfg.apiserverURL,
 		"clientID", cfg.clientID)
-	runErr := client.Run(ctx)
-	if err := <-healthErr; err != nil {
+	// Supervise both loops: a dead health listener (e.g. port conflict)
+	// must crash the process, not leave it running probeless.
+	runDone := make(chan error, 1)
+	go func() { runDone <- client.Run(ctx) }()
+	select {
+	case err := <-healthErr:
 		return err
+	case runErr := <-runDone:
+		if err := <-healthErr; err != nil {
+			return err
+		}
+		return runErr
 	}
-	return runErr
 }
 
 type config struct {
