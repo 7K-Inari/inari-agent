@@ -40,7 +40,7 @@ func TestRelayReusesConnections(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _ = io.Copy(io.Discard, res.Body)
-		res.Body.Close()
+		_ = res.Body.Close()
 	}
 	if n := conns.Load(); n > 2 {
 		t.Errorf("%d server-side conns for 20 sequential requests, want reuse (<=2)", n)
@@ -111,7 +111,7 @@ func TestWatchStreamHubCloseTerminates(t *testing.T) {
 				}
 				select {
 				case <-release:
-					pw.Close()
+					_ = pw.Close()
 					return
 				case <-time.After(time.Millisecond):
 				}
@@ -163,7 +163,7 @@ func TestBoundaryOpens(t *testing.T) {
 	release := make(chan struct{})
 	h2 := NewHandler(&stubDoer{t: t, respond: func(open *tunnelv1.TunnelOpen, body io.Reader) (*Result, error) {
 		pr, pw := io.Pipe()
-		go func() { <-release; pw.Close() }()
+		go func() { <-release; _ = pw.Close() }()
 		return &Result{Status: 200, Body: pr}, nil
 	}})
 	h2.SetSend(cap.send)
@@ -200,7 +200,7 @@ func TestRelayPathPassthrough(t *testing.T) {
 			t.Fatalf("path %q: %v", p, err)
 		}
 		_, _ = io.Copy(io.Discard, res.Body)
-		res.Body.Close()
+		_ = res.Body.Close()
 		if g := <-got; g != p {
 			t.Errorf("path %q arrived as %q", p, g)
 		}

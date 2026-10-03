@@ -221,7 +221,7 @@ func TestHandlerHubCloseTerminatesConn(t *testing.T) {
 	h := NewHandler(&stubDoer{t: t, respond: func(open *tunnelv1.TunnelOpen, body io.Reader) (*Result, error) {
 		// Body that never produces bytes until closed.
 		pr, pw := io.Pipe()
-		go func() { <-blocked; pw.Close() }()
+		go func() { <-blocked; _ = pw.Close() }()
 		return &Result{Status: 200, Body: pr}, nil
 	}})
 	h.SetSend(cap.send)

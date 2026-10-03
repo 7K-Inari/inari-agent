@@ -177,7 +177,7 @@ func (h *Handler) runConn(ctx context.Context, cs *connState, open *tunnelv1.Tun
 	defer cs.cancel()
 
 	pr, pw := io.Pipe()
-	defer pr.Close()
+	defer func() { _ = pr.Close() }()
 
 	// Inbound pump: hub frames → request body (pre-upgrade) or the raw
 	// upgraded connection (post-upgrade). writer swaps targets under mu.
@@ -190,7 +190,7 @@ func (h *Handler) runConn(ctx context.Context, cs *connState, open *tunnelv1.Tun
 	var reqBody io.Reader = pr
 	if !methodAllowsBody(open.GetMethod()) {
 		reqBody = nil
-		pr.Close()
+		_ = pr.Close()
 		w = &connWriter{w: io.Discard}
 	}
 	go h.inboundPump(ctx, cs, w)
@@ -206,13 +206,13 @@ func (h *Handler) runConn(ctx context.Context, cs *connState, open *tunnelv1.Tun
 		}})
 		return
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	// Unblock a socket read on the upgraded/raw body when the connection
 	// is torn down (hub close, byte cap, lifetime, stream reset): ctx
 	// cancel alone does not interrupt a raw net.Conn read.
 	go func() {
 		<-ctx.Done()
-		res.Body.Close()
+		_ = res.Body.Close()
 	}()
 
 	h.send(cs, &tunnelv1.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv1.TunnelMessage_OpenResult{
@@ -385,7 +385,7 @@ func (cw *connWriter) closePipe() {
 func (cw *connWriter) closePipeLocked() {
 	if !cw.pipeClosed && cw.pipe != nil {
 		cw.pipeClosed = true
-		cw.pipe.Close()
+		_ = cw.pipe.Close()
 	}
 }
 

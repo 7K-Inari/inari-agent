@@ -144,7 +144,7 @@ func (r *Relay) doUpgrade(ctx context.Context, target string, open *tunnelv1.Tun
 		}
 		tlsConn := tls.Client(conn, tlsCfg)
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil, fmt.Errorf("tunnelagent: apiserver TLS handshake: %w", err)
 		}
 		conn = tlsConn
@@ -152,21 +152,21 @@ func (r *Relay) doUpgrade(ctx context.Context, target string, open *tunnelv1.Tun
 
 	req, err := http.NewRequestWithContext(ctx, open.Method, target, nil)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("tunnelagent: build upgrade request: %w", err)
 	}
 	r.applyHeaders(req, open)
 	// Force HTTP/1.1 wire format: upgrades are an HTTP/1.1 mechanism.
 	req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/1.1", 1, 1
 	if err := req.Write(conn); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("tunnelagent: write upgrade request: %w", err)
 	}
 
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, req)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("tunnelagent: read upgrade response: %w", err)
 	}
 	if resp.StatusCode == http.StatusSwitchingProtocols {
@@ -243,6 +243,6 @@ type connClosingReader struct {
 
 func (r *connClosingReader) Close() error {
 	err := r.ReadCloser.Close()
-	r.c.Close()
+	_ = r.c.Close()
 	return err
 }

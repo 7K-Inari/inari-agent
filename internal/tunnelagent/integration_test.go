@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	tunnelv1 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1"
 	"github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1/tunnelv1connect"
@@ -104,13 +102,16 @@ func newFakeKubeproxyServer(t *testing.T, f *fakeKubeproxy) (addr string, cleanu
 	mux := http.NewServeMux()
 	path, handler := tunnelv1connect.NewTunnelServiceHandler(f)
 	mux.Handle(path, handler)
-	srv := &http.Server{Handler: h2c.NewHandler(mux, &http2.Server{})}
+	// Unencrypted HTTP/2 (h2c) via Protocols — h2c.NewHandler is deprecated.
+	protocols := &http.Protocols{}
+	protocols.SetUnencryptedHTTP2(true)
+	srv := &http.Server{Handler: mux, Protocols: protocols}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	go srv.Serve(ln)
-	return "http://" + ln.Addr().String(), func() { srv.Close() }
+	go func() { _ = srv.Serve(ln) }()
+	return "http://" + ln.Addr().String(), func() { _ = srv.Close() }
 }
 
 type staticToken struct{}
@@ -151,7 +152,7 @@ func TestTunnelEndToEnd(t *testing.T) {
 	client := newTestClient(addr, &Relay{BaseURL: apiserver.URL, BearerToken: "sa-token-it"}, kp)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go client.Run(ctx)
+	go func() { _ = client.Run(ctx) }()
 
 	// The stream is authenticated with the client-credentials JWT.
 	select {
@@ -209,13 +210,13 @@ func TestTunnelEndToEndUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		br := bufio.NewReader(conn)
 		req, err := http.ReadRequest(br)
 		if err != nil {
@@ -235,7 +236,7 @@ func TestTunnelEndToEndUpgrade(t *testing.T) {
 	client := newTestClient(addr, &Relay{BaseURL: "http://" + ln.Addr().String(), BearerToken: "sa"}, kp)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go client.Run(ctx)
+	go func() { _ = client.Run(ctx) }()
 
 	select {
 	case <-kp.authToken:
@@ -297,7 +298,7 @@ func TestTunnelReconnectAfterStreamDrop(t *testing.T) {
 	client := newTestClient(addr, &Relay{BaseURL: "http://127.0.0.1:1", BearerToken: "sa"}, kp)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go client.Run(ctx)
+	go func() { _ = client.Run(ctx) }()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for kp.sessions.Load() < 2 && time.Now().Before(deadline) {
