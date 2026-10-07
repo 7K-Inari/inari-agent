@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	tunnelv1 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1"
+	tunnelv2 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2"
 )
 
 // Relay executes proxied HTTP requests against the tenant apiserver.
@@ -76,7 +76,7 @@ type Result struct {
 // streams the request body (inbound frames); for upgrade requests it is
 // typically empty. Do returns once the response head is available; the
 // caller streams the body afterwards.
-func (r *Relay) Do(ctx context.Context, open *tunnelv1.TunnelOpen, reqBody io.Reader) (*Result, error) {
+func (r *Relay) Do(ctx context.Context, open *tunnelv2.TunnelOpen, reqBody io.Reader) (*Result, error) {
 	target := r.BaseURL + open.Path
 	if _, err := url.Parse(target); err != nil {
 		return nil, fmt.Errorf("tunnelagent: parse request URL: %w", err)
@@ -111,7 +111,7 @@ func (r *Relay) Do(ctx context.Context, open *tunnelv1.TunnelOpen, reqBody io.Re
 // 101 response. On a non-101 response (apiserver rejected the upgrade) the
 // response is returned like a normal one, with the connection closed when
 // the body is closed.
-func (r *Relay) doUpgrade(ctx context.Context, target string, open *tunnelv1.TunnelOpen) (*Result, error) {
+func (r *Relay) doUpgrade(ctx context.Context, target string, open *tunnelv2.TunnelOpen) (*Result, error) {
 	u, err := url.Parse(target)
 	if err != nil {
 		return nil, fmt.Errorf("tunnelagent: parse request URL: %w", err)
@@ -189,9 +189,9 @@ func (r *Relay) doUpgrade(ctx context.Context, target string, open *tunnelv1.Tun
 // applyHeaders copies the hub-sanitized headers (already minted with
 // Impersonate-* by kubeproxy) onto the request and forces the SA bearer
 // token — inbound Authorization is never trusted.
-func (r *Relay) applyHeaders(req *http.Request, open *tunnelv1.TunnelOpen) {
-	for k, v := range open.Headers {
-		req.Header.Set(k, v)
+func (r *Relay) applyHeaders(req *http.Request, open *tunnelv2.TunnelOpen) {
+	for k, vs := range open.Headers {
+		req.Header[k] = vs.GetValues()
 	}
 	token := r.BearerToken
 	if r.TokenFunc != nil {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	tunnelv1 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1"
+	tunnelv2 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2"
 )
 
 func TestRelayPassesImpersonationAndSAToken(t *testing.T) {
@@ -28,16 +28,16 @@ func TestRelayPassesImpersonationAndSAToken(t *testing.T) {
 	defer srv.Close()
 
 	r := &Relay{BaseURL: srv.URL, BearerToken: "sa-token-123"}
-	res, err := r.Do(context.Background(), &tunnelv1.TunnelOpen{
+	res, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{
 		Method: "GET",
 		Path:   "/api/v1/namespaces/default/pods?limit=5",
-		Headers: map[string]string{
-			"Impersonate-User":  "alice@example.com",
-			"Impersonate-Group": "system:authenticated",
-			"Impersonate-Uid":   "uid-42",
+		Headers: map[string]*tunnelv2.StringList{
+			"Impersonate-User":  {Values: []string{"alice@example.com"}},
+			"Impersonate-Group": {Values: []string{"system:authenticated"}},
+			"Impersonate-Uid":   {Values: []string{"uid-42"}},
 			// An inbound Authorization header must never be trusted: the
 			// agent always forces its own SA token.
-			"Authorization": "Bearer attacker-token",
+			"Authorization": {Values: []string{"Bearer attacker-token"}},
 		},
 	}, strings.NewReader(""))
 	if err != nil {
@@ -79,10 +79,10 @@ func TestRelayRequestBodyRoundTrip(t *testing.T) {
 	defer srv.Close()
 
 	r := &Relay{BaseURL: srv.URL, BearerToken: "tok"}
-	res, err := r.Do(context.Background(), &tunnelv1.TunnelOpen{
+	res, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{
 		Method:  "POST",
 		Path:    "/api/v1/namespaces",
-		Headers: map[string]string{"Content-Type": "application/json"},
+		Headers: map[string]*tunnelv2.StringList{"Content-Type": {Values: []string{"application/json"}}},
 	}, strings.NewReader(`{"metadata":{"name":"x"}}`))
 	if err != nil {
 		t.Fatalf("Do: %v", err)
@@ -132,13 +132,13 @@ func TestRelayUpgradePassthrough(t *testing.T) {
 	}()
 
 	r := &Relay{BaseURL: "http://" + ln.Addr().String(), BearerToken: "sa-token-123"}
-	res, err := r.Do(context.Background(), &tunnelv1.TunnelOpen{
+	res, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{
 		Method: "GET",
 		Path:   "/api/v1/namespaces/default/pods/mypod/exec?command=sh",
-		Headers: map[string]string{
-			"Connection":       "Upgrade",
-			"Upgrade":          "SPDY/3.1",
-			"Impersonate-User": "alice@example.com",
+		Headers: map[string]*tunnelv2.StringList{
+			"Connection":       {Values: []string{"Upgrade"}},
+			"Upgrade":          {Values: []string{"SPDY/3.1"}},
+			"Impersonate-User": {Values: []string{"alice@example.com"}},
 		},
 		UpgradeExpected: true,
 	}, strings.NewReader(""))
@@ -177,7 +177,7 @@ func TestRelayUpgradeRejected(t *testing.T) {
 	defer srv.Close()
 
 	r := &Relay{BaseURL: srv.URL, BearerToken: "tok"}
-	res, err := r.Do(context.Background(), &tunnelv1.TunnelOpen{
+	res, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{
 		Method:          "GET",
 		Path:            "/api/v1/namespaces/default/pods/p/exec",
 		UpgradeExpected: true,
@@ -200,7 +200,7 @@ func TestRelayUpgradeRejected(t *testing.T) {
 
 func TestRelayDialFailure(t *testing.T) {
 	r := &Relay{BaseURL: "http://127.0.0.1:1", BearerToken: "tok"}
-	_, err := r.Do(context.Background(), &tunnelv1.TunnelOpen{
+	_, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{
 		Method:          "GET",
 		Path:            "/api",
 		UpgradeExpected: true,
@@ -216,7 +216,10 @@ func TestHeaderMap(t *testing.T) {
 	h.Set("X-Multi", "a")
 	h.Add("X-Multi", "b")
 	m := headerMap(h)
-	if m["Content-Type"] != "application/json" || m["X-Multi"] != "a" {
+	if m["Content-Type"].GetValues()[0] != "application/json" {
 		t.Errorf("headerMap = %v", m)
+	}
+	if got := m["X-Multi"].GetValues(); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("headerMap lost repeated values = %v", m)
 	}
 }

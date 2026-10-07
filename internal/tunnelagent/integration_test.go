@@ -14,8 +14,8 @@ import (
 
 	"connectrpc.com/connect"
 
-	tunnelv1 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1"
-	"github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1/tunnelv1connect"
+	tunnelv2 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2"
+	"github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2/tunnelv2connect"
 
 	"github.com/7K-Inari/inari-agent/internal/stream"
 )
@@ -24,21 +24,21 @@ import (
 // agent's bearer token and pings, and lets the test drive Open/Frame/Close
 // toward the agent and read OpenResult/Frame/Close back.
 type fakeKubeproxy struct {
-	tunnelv1connect.UnimplementedTunnelServiceHandler
+	tunnelv2connect.UnimplementedTunnelServiceHandler
 
 	sessions  atomic.Int32
 	pings     atomic.Int32
 	authToken chan string
 
 	mu      sync.Mutex
-	send    func(*tunnelv1.TunnelMessage) error
-	inbound chan *tunnelv1.TunnelMessage // OpenResult/Frame/Close from the agent
+	send    func(*tunnelv2.TunnelMessage) error
+	inbound chan *tunnelv2.TunnelMessage // OpenResult/Frame/Close from the agent
 	// onSession, when set, runs inside the Connect handler before the
 	// receive loop; a non-nil return ends the session (reconnect test).
 	onSession func() error
 }
 
-func (f *fakeKubeproxy) Connect(ctx context.Context, s *connect.BidiStream[tunnelv1.TunnelMessage, tunnelv1.TunnelMessage]) error {
+func (f *fakeKubeproxy) Connect(ctx context.Context, s *connect.BidiStream[tunnelv2.TunnelMessage, tunnelv2.TunnelMessage]) error {
 	n := f.sessions.Add(1)
 	if n == 1 {
 		f.authToken <- s.RequestHeader().Get("Authorization")
@@ -68,7 +68,7 @@ func (f *fakeKubeproxy) Connect(ctx context.Context, s *connect.BidiStream[tunne
 	}
 }
 
-func (f *fakeKubeproxy) sendToAgent(t *testing.T, m *tunnelv1.TunnelMessage) {
+func (f *fakeKubeproxy) sendToAgent(t *testing.T, m *tunnelv2.TunnelMessage) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -86,7 +86,7 @@ func (f *fakeKubeproxy) sendToAgent(t *testing.T, m *tunnelv1.TunnelMessage) {
 	t.Fatal("no active session to send on")
 }
 
-func (f *fakeKubeproxy) receive(t *testing.T, what string) *tunnelv1.TunnelMessage {
+func (f *fakeKubeproxy) receive(t *testing.T, what string) *tunnelv2.TunnelMessage {
 	t.Helper()
 	select {
 	case m := <-f.inbound:
@@ -100,7 +100,7 @@ func (f *fakeKubeproxy) receive(t *testing.T, what string) *tunnelv1.TunnelMessa
 func newFakeKubeproxyServer(t *testing.T, f *fakeKubeproxy) (addr string, cleanup func()) {
 	t.Helper()
 	mux := http.NewServeMux()
-	path, handler := tunnelv1connect.NewTunnelServiceHandler(f)
+	path, handler := tunnelv2connect.NewTunnelServiceHandler(f)
 	mux.Handle(path, handler)
 	// Unencrypted HTTP/2 (h2c) via Protocols — h2c.NewHandler is deprecated.
 	protocols := &http.Protocols{}
@@ -121,7 +121,7 @@ func (staticToken) Token(context.Context) (string, error) { return "test-jwt", n
 func newFakeKubeproxy() *fakeKubeproxy {
 	return &fakeKubeproxy{
 		authToken: make(chan string, 1),
-		inbound:   make(chan *tunnelv1.TunnelMessage, 64),
+		inbound:   make(chan *tunnelv2.TunnelMessage, 64),
 	}
 }
 
@@ -164,13 +164,13 @@ func TestTunnelEndToEnd(t *testing.T) {
 		t.Fatal("no session established")
 	}
 
-	kp.sendToAgent(t, &tunnelv1.TunnelMessage{ConnectionId: "it-1", Payload: &tunnelv1.TunnelMessage_Open{
-		Open: &tunnelv1.TunnelOpen{
+	kp.sendToAgent(t, &tunnelv2.TunnelMessage{ConnectionId: "it-1", Payload: &tunnelv2.TunnelMessage_Open{
+		Open: &tunnelv2.TunnelOpen{
 			Method: "GET",
 			Path:   "/api/v1/pods",
-			Headers: map[string]string{
-				"Impersonate-User":  "alice@example.com",
-				"Impersonate-Group": "devs",
+			Headers: map[string]*tunnelv2.StringList{
+				"Impersonate-User":  {Values: []string{"alice@example.com"}},
+				"Impersonate-Group": {Values: []string{"devs"}},
 			},
 		},
 	}})
@@ -179,7 +179,7 @@ func TestTunnelEndToEnd(t *testing.T) {
 	if or.GetConnectionId() != "it-1" || or.GetOpenResult().GetStatus() != 200 {
 		t.Fatalf("OpenResult = %v", or.GetOpenResult())
 	}
-	if or.GetOpenResult().GetHeaders()["Content-Type"] != "application/json" {
+	if got := or.GetOpenResult().GetHeaders()["Content-Type"].GetValues(); len(got) != 1 || got[0] != "application/json" {
 		t.Errorf("OpenResult headers = %v", or.GetOpenResult().GetHeaders())
 	}
 	frame := kp.receive(t, "response frame")
@@ -244,14 +244,14 @@ func TestTunnelEndToEndUpgrade(t *testing.T) {
 		t.Fatal("no session established")
 	}
 
-	kp.sendToAgent(t, &tunnelv1.TunnelMessage{ConnectionId: "up-1", Payload: &tunnelv1.TunnelMessage_Open{
-		Open: &tunnelv1.TunnelOpen{
+	kp.sendToAgent(t, &tunnelv2.TunnelMessage{ConnectionId: "up-1", Payload: &tunnelv2.TunnelMessage_Open{
+		Open: &tunnelv2.TunnelOpen{
 			Method: "GET",
 			Path:   "/api/v1/namespaces/default/pods/p/exec?command=sh&stdin=true",
-			Headers: map[string]string{
-				"Connection":       "Upgrade",
-				"Upgrade":          "websocket",
-				"Impersonate-User": "alice@example.com",
+			Headers: map[string]*tunnelv2.StringList{
+				"Connection":       {Values: []string{"Upgrade"}},
+				"Upgrade":          {Values: []string{"websocket"}},
+				"Impersonate-User": {Values: []string{"alice@example.com"}},
 			},
 			UpgradeExpected: true,
 		},
@@ -263,8 +263,8 @@ func TestTunnelEndToEndUpgrade(t *testing.T) {
 	}
 
 	// Bytes framed to the agent must be echoed back over the raw splice.
-	kp.sendToAgent(t, &tunnelv1.TunnelMessage{ConnectionId: "up-1", Payload: &tunnelv1.TunnelMessage_Frame{
-		Frame: &tunnelv1.TunnelFrame{Data: []byte("stream-stdin-bytes")},
+	kp.sendToAgent(t, &tunnelv2.TunnelMessage{ConnectionId: "up-1", Payload: &tunnelv2.TunnelMessage_Frame{
+		Frame: &tunnelv2.TunnelFrame{Data: []byte("stream-stdin-bytes")},
 	}})
 	frame := kp.receive(t, "upgraded echo frame")
 	if string(frame.GetFrame().GetData()) != "stream-stdin-bytes" {
@@ -272,8 +272,8 @@ func TestTunnelEndToEndUpgrade(t *testing.T) {
 	}
 
 	// Hub closes; the agent tears the connection down without echoing Close.
-	kp.sendToAgent(t, &tunnelv1.TunnelMessage{ConnectionId: "up-1", Payload: &tunnelv1.TunnelMessage_Close{
-		Close: &tunnelv1.TunnelClose{Reason: "kubectl-exit"},
+	kp.sendToAgent(t, &tunnelv2.TunnelMessage{ConnectionId: "up-1", Payload: &tunnelv2.TunnelMessage_Close{
+		Close: &tunnelv2.TunnelClose{Reason: "kubectl-exit"},
 	}})
 	deadline := time.Now().Add(2 * time.Second)
 	for client.Handler.ActiveConns() != 0 && time.Now().Before(deadline) {

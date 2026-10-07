@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	tunnelv1 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1"
+	tunnelv2 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2"
 )
 
 const (
@@ -26,7 +26,7 @@ const (
 
 // Doer executes a proxied request; *Relay implements it (tests stub it).
 type Doer interface {
-	Do(ctx context.Context, open *tunnelv1.TunnelOpen, body io.Reader) (*Result, error)
+	Do(ctx context.Context, open *tunnelv2.TunnelOpen, body io.Reader) (*Result, error)
 }
 
 // Handler owns the per-connection open/frame/close lifecycle on the agent
@@ -37,7 +37,7 @@ type Handler struct {
 	// Send enqueues a message toward kubeproxy. The stream client installs
 	// it per session; between sessions Send drops messages (connections are
 	// reset on disconnect anyway).
-	Send   func(msg *tunnelv1.TunnelMessage)
+	Send   func(msg *tunnelv2.TunnelMessage)
 	Logger *slog.Logger
 
 	FrameSize       int
@@ -51,7 +51,7 @@ type Handler struct {
 type connState struct {
 	id     string
 	cancel context.CancelFunc
-	in     chan *tunnelv1.TunnelFrame
+	in     chan *tunnelv2.TunnelFrame
 	done   chan struct{}
 	bytes  atomic.Int64
 }
@@ -62,13 +62,13 @@ func NewHandler(relay Doer) *Handler {
 }
 
 // Handle dispatches one inbound TunnelMessage from kubeproxy.
-func (h *Handler) Handle(msg *tunnelv1.TunnelMessage) {
+func (h *Handler) Handle(msg *tunnelv2.TunnelMessage) {
 	switch p := msg.GetPayload().(type) {
-	case *tunnelv1.TunnelMessage_Open:
+	case *tunnelv2.TunnelMessage_Open:
 		h.openConn(msg.GetConnectionId(), p.Open)
-	case *tunnelv1.TunnelMessage_Frame:
+	case *tunnelv2.TunnelMessage_Frame:
 		h.deliverFrame(msg.GetConnectionId(), p.Frame)
-	case *tunnelv1.TunnelMessage_Close:
+	case *tunnelv2.TunnelMessage_Close:
 		h.closeFromHub(msg.GetConnectionId(), p.Close.GetReason())
 	default:
 		// OpenResult/Ping are agent→hub only; ignore strays.
@@ -101,7 +101,7 @@ func (h *Handler) ActiveConns() int {
 	return len(h.conns)
 }
 
-func (h *Handler) openConn(id string, open *tunnelv1.TunnelOpen) {
+func (h *Handler) openConn(id string, open *tunnelv2.TunnelOpen) {
 	if id == "" || open == nil {
 		return
 	}
@@ -113,7 +113,7 @@ func (h *Handler) openConn(id string, open *tunnelv1.TunnelOpen) {
 	cs := &connState{
 		id:     id,
 		cancel: cancel,
-		in:     make(chan *tunnelv1.TunnelFrame, 64),
+		in:     make(chan *tunnelv2.TunnelFrame, 64),
 		done:   make(chan struct{}),
 	}
 	h.mu.Lock()
@@ -128,7 +128,7 @@ func (h *Handler) openConn(id string, open *tunnelv1.TunnelOpen) {
 	go h.runConn(ctx, cs, open)
 }
 
-func (h *Handler) deliverFrame(id string, f *tunnelv1.TunnelFrame) {
+func (h *Handler) deliverFrame(id string, f *tunnelv2.TunnelFrame) {
 	h.mu.Lock()
 	cs := h.conns[id]
 	h.mu.Unlock()
@@ -143,8 +143,8 @@ func (h *Handler) deliverFrame(id string, f *tunnelv1.TunnelFrame) {
 		// here would stall the stream's single receive loop for every
 		// other connection — terminate this connection instead.
 		h.logger().Warn("inbound frame queue full, closing connection", "connID", id)
-		h.send(cs, &tunnelv1.TunnelMessage{ConnectionId: id, Payload: &tunnelv1.TunnelMessage_Close{
-			Close: &tunnelv1.TunnelClose{Reason: "inbound-overflow"},
+		h.send(cs, &tunnelv2.TunnelMessage{ConnectionId: id, Payload: &tunnelv2.TunnelMessage_Close{
+			Close: &tunnelv2.TunnelClose{Reason: "inbound-overflow"},
 		}})
 		cs.cancel()
 	}
@@ -172,7 +172,7 @@ func (h *Handler) unregister(cs *connState) {
 
 // runConn owns one proxied connection: request body pump → relay →
 // OpenResult → body→frame pump → terminal Close.
-func (h *Handler) runConn(ctx context.Context, cs *connState, open *tunnelv1.TunnelOpen) {
+func (h *Handler) runConn(ctx context.Context, cs *connState, open *tunnelv2.TunnelOpen) {
 	defer h.unregister(cs)
 	defer cs.cancel()
 
@@ -198,11 +198,11 @@ func (h *Handler) runConn(ctx context.Context, cs *connState, open *tunnelv1.Tun
 	res, err := h.Relay.Do(ctx, open, reqBody)
 	if err != nil {
 		h.logger().Warn("tunnel relay open failed", "connID", cs.id, "error", err)
-		h.send(cs, &tunnelv1.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv1.TunnelMessage_OpenResult{
-			OpenResult: &tunnelv1.TunnelOpenResult{Error: err.Error()},
+		h.send(cs, &tunnelv2.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv2.TunnelMessage_OpenResult{
+			OpenResult: &tunnelv2.TunnelOpenResult{Error: err.Error()},
 		}})
-		h.send(cs, &tunnelv1.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv1.TunnelMessage_Close{
-			Close: &tunnelv1.TunnelClose{Reason: "open-failed"},
+		h.send(cs, &tunnelv2.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv2.TunnelMessage_Close{
+			Close: &tunnelv2.TunnelClose{Reason: "open-failed"},
 		}})
 		return
 	}
@@ -215,8 +215,8 @@ func (h *Handler) runConn(ctx context.Context, cs *connState, open *tunnelv1.Tun
 		_ = res.Body.Close()
 	}()
 
-	h.send(cs, &tunnelv1.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv1.TunnelMessage_OpenResult{
-		OpenResult: &tunnelv1.TunnelOpenResult{
+	h.send(cs, &tunnelv2.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv2.TunnelMessage_OpenResult{
+		OpenResult: &tunnelv2.TunnelOpenResult{
 			Status:  int32(res.Status),
 			Headers: headerMap(res.Header),
 		},
@@ -228,8 +228,8 @@ func (h *Handler) runConn(ctx context.Context, cs *connState, open *tunnelv1.Tun
 
 	// Outbound pump: response body / upgraded socket → frames.
 	if reason := h.outboundPump(ctx, cs, res.Body); reason != "" {
-		h.send(cs, &tunnelv1.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv1.TunnelMessage_Close{
-			Close: &tunnelv1.TunnelClose{Reason: reason},
+		h.send(cs, &tunnelv2.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv2.TunnelMessage_Close{
+			Close: &tunnelv2.TunnelClose{Reason: reason},
 		}})
 	}
 }
@@ -279,8 +279,8 @@ func (h *Handler) outboundPump(ctx context.Context, cs *connState, body io.Reade
 			if !h.chargeBytes(cs, int64(n)) {
 				return "" // cap path already sent Close{byte-cap-exceeded}
 			}
-			h.send(cs, &tunnelv1.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv1.TunnelMessage_Frame{
-				Frame: &tunnelv1.TunnelFrame{Data: buf[:n]},
+			h.send(cs, &tunnelv2.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv2.TunnelMessage_Frame{
+				Frame: &tunnelv2.TunnelFrame{Data: buf[:n]},
 			}})
 		}
 		if err != nil {
@@ -310,14 +310,14 @@ func (h *Handler) chargeBytes(cs *connState, n int64) bool {
 		return true
 	}
 	h.logger().Warn("tunnel connection byte cap exceeded, closing", "connID", cs.id, "cap", maxBytes)
-	h.send(cs, &tunnelv1.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv1.TunnelMessage_Close{
-		Close: &tunnelv1.TunnelClose{Reason: "byte-cap-exceeded"},
+	h.send(cs, &tunnelv2.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv2.TunnelMessage_Close{
+		Close: &tunnelv2.TunnelClose{Reason: "byte-cap-exceeded"},
 	}})
 	cs.cancel()
 	return false
 }
 
-func (h *Handler) send(cs *connState, msg *tunnelv1.TunnelMessage) {
+func (h *Handler) send(cs *connState, msg *tunnelv2.TunnelMessage) {
 	h.mu.Lock()
 	send := h.Send
 	h.mu.Unlock()
@@ -327,7 +327,7 @@ func (h *Handler) send(cs *connState, msg *tunnelv1.TunnelMessage) {
 }
 
 // SetSend installs the per-session sender (nil between sessions).
-func (h *Handler) SetSend(send func(msg *tunnelv1.TunnelMessage)) {
+func (h *Handler) SetSend(send func(msg *tunnelv2.TunnelMessage)) {
 	h.mu.Lock()
 	h.Send = send
 	h.mu.Unlock()
@@ -402,10 +402,10 @@ func methodAllowsBody(method string) bool {
 
 // headerMap flattens response headers for TunnelOpenResult (first value
 // wins; the hub re-expands multi-value headers it cares about).
-func headerMap(h http.Header) map[string]string {
-	out := make(map[string]string, len(h))
-	for k := range h {
-		out[k] = h.Get(k)
+func headerMap(h http.Header) map[string]*tunnelv2.StringList {
+	out := make(map[string]*tunnelv2.StringList, len(h))
+	for k, vs := range h {
+		out[k] = &tunnelv2.StringList{Values: vs}
 	}
 	return out
 }

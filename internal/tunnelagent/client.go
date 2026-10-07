@@ -12,8 +12,8 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	tunnelv1 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1"
-	"github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1/tunnelv1connect"
+	tunnelv2 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2"
+	"github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2/tunnelv2connect"
 
 	"github.com/7K-Inari/inari-agent/internal/stream"
 )
@@ -117,14 +117,14 @@ func (c *Client) session(ctx context.Context) error {
 	if httpClient == nil {
 		httpClient = stream.DefaultHTTPClient(c.Address)
 	}
-	svc := tunnelv1connect.NewTunnelServiceClient(httpClient, c.Address)
+	svc := tunnelv2connect.NewTunnelServiceClient(httpClient, c.Address)
 	bidi := svc.Connect(ctx)
 	bidi.RequestHeader().Set("Authorization", "Bearer "+token)
 
 	// Wire the handler's outbound path to this session's send pump; reset
 	// all connections when the session ends (the hub's side is gone).
-	sendCh := make(chan *tunnelv1.TunnelMessage, 256)
-	c.Handler.SetSend(func(msg *tunnelv1.TunnelMessage) {
+	sendCh := make(chan *tunnelv2.TunnelMessage, 256)
+	c.Handler.SetSend(func(msg *tunnelv2.TunnelMessage) {
 		select {
 		case sendCh <- msg:
 		default:
@@ -167,8 +167,8 @@ func (c *Client) session(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case t := <-ticker.C:
-				ping := &tunnelv1.TunnelMessage{Payload: &tunnelv1.TunnelMessage_Ping{
-					Ping: &tunnelv1.TunnelPing{Time: timestamppb.New(t)},
+				ping := &tunnelv2.TunnelMessage{Payload: &tunnelv2.TunnelMessage_Ping{
+					Ping: &tunnelv2.TunnelPing{Time: timestamppb.New(t)},
 				}}
 				select {
 				case sendCh <- ping:
