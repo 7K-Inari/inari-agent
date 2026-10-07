@@ -400,8 +400,8 @@ func methodAllowsBody(method string) bool {
 	}
 }
 
-// headerMap flattens response headers for TunnelOpenResult (first value
-// wins; the hub re-expands multi-value headers it cares about).
+// headerMap carries response headers for TunnelOpenResult with all
+// values preserved (multi-valued contract: Set-Cookie must not join).
 func headerMap(h http.Header) map[string]*tunnelv2.StringList {
 	out := make(map[string]*tunnelv2.StringList, len(h))
 	for k, vs := range h {

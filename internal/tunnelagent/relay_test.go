@@ -135,8 +135,9 @@ func TestRelayUpgradePassthrough(t *testing.T) {
 	res, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{
 		Method: "GET",
 		Path:   "/api/v1/namespaces/default/pods/mypod/exec?command=sh",
+		// Mirrors production: kubeproxy strips hop-by-hop Connection
+		// before forwarding, so the relay must re-add it itself.
 		Headers: map[string]*tunnelv2.StringList{
-			"Connection":       {Values: []string{"Upgrade"}},
 			"Upgrade":          {Values: []string{"SPDY/3.1"}},
 			"Impersonate-User": {Values: []string{"alice@example.com"}},
 		},

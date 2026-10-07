@@ -156,6 +156,11 @@ func (r *Relay) doUpgrade(ctx context.Context, target string, open *tunnelv2.Tun
 		return nil, fmt.Errorf("tunnelagent: build upgrade request: %w", err)
 	}
 	r.applyHeaders(req, open)
+	// kubeproxy strips hop-by-hop Connection before forwarding; the agent
+	// owns the transport, so re-declare the upgrade intent here. Without
+	// it a real apiserver (which requires BOTH Connection: Upgrade and
+	// Upgrade) refuses the 101.
+	req.Header.Set("Connection", "Upgrade")
 	// Force HTTP/1.1 wire format: upgrades are an HTTP/1.1 mechanism.
 	req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/1.1", 1, 1
 	if err := req.Write(conn); err != nil {
