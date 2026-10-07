@@ -196,7 +196,10 @@ func (r *Relay) doUpgrade(ctx context.Context, target string, open *tunnelv2.Tun
 // token — inbound Authorization is never trusted.
 func (r *Relay) applyHeaders(req *http.Request, open *tunnelv2.TunnelOpen) {
 	for k, vs := range open.Headers {
-		req.Header[k] = vs.GetValues()
+		// Canonicalize: a non-canonical key (e.g. lowercase "authorization")
+		// set via direct map assignment would survive the forced SA-token
+		// override below as a second header line.
+		req.Header[http.CanonicalHeaderKey(k)] = vs.GetValues()
 	}
 	token := r.BearerToken
 	if r.TokenFunc != nil {

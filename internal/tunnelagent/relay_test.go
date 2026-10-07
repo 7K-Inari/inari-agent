@@ -15,8 +15,10 @@ import (
 
 func TestRelayPassesImpersonationAndSAToken(t *testing.T) {
 	var gotAuth, gotUser, gotGroup, gotUID, gotPath string
+	var gotAuthValues []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
+		gotAuthValues = r.Header.Values("Authorization")
 		gotUser = r.Header.Get("Impersonate-User")
 		gotGroup = r.Header.Get("Impersonate-Group")
 		gotUID = r.Header.Get("Impersonate-Uid")
@@ -36,8 +38,11 @@ func TestRelayPassesImpersonationAndSAToken(t *testing.T) {
 			"Impersonate-Group": {Values: []string{"system:authenticated"}},
 			"Impersonate-Uid":   {Values: []string{"uid-42"}},
 			// An inbound Authorization header must never be trusted: the
-			// agent always forces its own SA token.
+			// agent always forces its own SA token. The lowercase variant
+			// pins canonicalization — a direct map assignment would leak
+			// it as a second Authorization line on the wire.
 			"Authorization": {Values: []string{"Bearer attacker-token"}},
+			"authorization": {Values: []string{"Bearer attacker-token-lower"}},
 		},
 	}, strings.NewReader(""))
 	if err != nil {
@@ -47,6 +52,9 @@ func TestRelayPassesImpersonationAndSAToken(t *testing.T) {
 
 	if gotAuth != "Bearer sa-token-123" {
 		t.Errorf("Authorization = %q, want SA token", gotAuth)
+	}
+	if len(gotAuthValues) != 1 || gotAuthValues[0] != "Bearer sa-token-123" {
+		t.Errorf("Authorization wire values = %v, want exactly the SA token (inbound tokens must be fully overridden, case-insensitively)", gotAuthValues)
 	}
 	if gotUser != "alice@example.com" || gotGroup != "system:authenticated" || gotUID != "uid-42" {
 		t.Errorf("impersonation headers = %q/%q/%q", gotUser, gotGroup, gotUID)
