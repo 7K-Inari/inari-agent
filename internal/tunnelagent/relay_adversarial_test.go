@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	tunnelv1 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v1"
+	tunnelv2 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2"
 )
 
 // The non-upgrade client must be shared: a fresh Transport per request
@@ -35,7 +35,7 @@ func TestRelayReusesConnections(t *testing.T) {
 
 	r := &Relay{BaseURL: srv.URL, BearerToken: "tok"}
 	for i := 0; i < 20; i++ {
-		res, err := r.Do(context.Background(), &tunnelv1.TunnelOpen{Method: "GET", Path: "/api"}, nil)
+		res, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{Method: "GET", Path: "/api"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,13 +68,13 @@ func TestRelayUpgradeOverTLS(t *testing.T) {
 	pool := x509.NewCertPool()
 	pool.AddCert(srv.Certificate())
 	r := &Relay{BaseURL: srv.URL, BearerToken: "tok", TLSConfig: &tls.Config{RootCAs: pool}}
-	res, err := r.Do(context.Background(), &tunnelv1.TunnelOpen{
+	res, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{
 		Method: "GET",
 		Path:   "/api/v1/namespaces/default/pods/p/exec?command=sh",
-		Headers: map[string]string{
-			"Connection":       "Upgrade",
-			"Upgrade":          "websocket",
-			"Impersonate-User": "alice@example.com",
+		Headers: map[string]*tunnelv2.StringList{
+			"Connection":       {Values: []string{"Upgrade"}},
+			"Upgrade":          {Values: []string{"websocket"}},
+			"Impersonate-User": {Values: []string{"alice@example.com"}},
 		},
 		UpgradeExpected: true,
 	}, nil)
@@ -102,7 +102,7 @@ func TestRelayUpgradeOverTLS(t *testing.T) {
 func TestWatchStreamHubCloseTerminates(t *testing.T) {
 	cap := &capture{}
 	release := make(chan struct{})
-	h := NewHandler(&stubDoer{t: t, respond: func(open *tunnelv1.TunnelOpen, body io.Reader) (*Result, error) {
+	h := NewHandler(&stubDoer{t: t, respond: func(open *tunnelv2.TunnelOpen, body io.Reader) (*Result, error) {
 		pr, pw := io.Pipe()
 		go func() {
 			for i := 0; ; i++ {
@@ -122,18 +122,18 @@ func TestWatchStreamHubCloseTerminates(t *testing.T) {
 	}})
 	h.SetSend(cap.send)
 
-	h.Handle(&tunnelv1.TunnelMessage{ConnectionId: "w1", Payload: &tunnelv1.TunnelMessage_Open{
-		Open: &tunnelv1.TunnelOpen{Method: "GET", Path: "/api/v1/pods?watch=true"},
+	h.Handle(&tunnelv2.TunnelMessage{ConnectionId: "w1", Payload: &tunnelv2.TunnelMessage_Open{
+		Open: &tunnelv2.TunnelOpen{Method: "GET", Path: "/api/v1/pods?watch=true"},
 	}})
-	cap.waitFor(t, func(m *tunnelv1.TunnelMessage) bool {
+	cap.waitFor(t, func(m *tunnelv2.TunnelMessage) bool {
 		return m.GetConnectionId() == "w1" && m.GetFrame() != nil
 	}, "watch frame")
 
-	h.Handle(&tunnelv1.TunnelMessage{ConnectionId: "w1", Payload: &tunnelv1.TunnelMessage_Frame{
-		Frame: &tunnelv1.TunnelFrame{Data: []byte("stray")},
+	h.Handle(&tunnelv2.TunnelMessage{ConnectionId: "w1", Payload: &tunnelv2.TunnelMessage_Frame{
+		Frame: &tunnelv2.TunnelFrame{Data: []byte("stray")},
 	}})
-	h.Handle(&tunnelv1.TunnelMessage{ConnectionId: "w1", Payload: &tunnelv1.TunnelMessage_Close{
-		Close: &tunnelv1.TunnelClose{Reason: "client-gone"},
+	h.Handle(&tunnelv2.TunnelMessage{ConnectionId: "w1", Payload: &tunnelv2.TunnelMessage_Close{
+		Close: &tunnelv2.TunnelClose{Reason: "client-gone"},
 	}})
 	deadline := time.Now().Add(2 * time.Second)
 	for h.ActiveConns() != 0 && time.Now().Before(deadline) {
@@ -152,27 +152,27 @@ func TestBoundaryOpens(t *testing.T) {
 	h := NewHandler(&stubDoer{t: t})
 	h.SetSend(cap.send)
 
-	h.Handle(&tunnelv1.TunnelMessage{ConnectionId: "", Payload: &tunnelv1.TunnelMessage_Open{
-		Open: &tunnelv1.TunnelOpen{Method: "GET", Path: "/x"},
+	h.Handle(&tunnelv2.TunnelMessage{ConnectionId: "", Payload: &tunnelv2.TunnelMessage_Open{
+		Open: &tunnelv2.TunnelOpen{Method: "GET", Path: "/x"},
 	}})
-	h.Handle(&tunnelv1.TunnelMessage{ConnectionId: "n1", Payload: &tunnelv1.TunnelMessage_Open{Open: nil}})
+	h.Handle(&tunnelv2.TunnelMessage{ConnectionId: "n1", Payload: &tunnelv2.TunnelMessage_Open{Open: nil}})
 	if n := h.ActiveConns(); n != 0 {
 		t.Errorf("empty id / nil open created conns, active=%d", n)
 	}
 
 	release := make(chan struct{})
-	h2 := NewHandler(&stubDoer{t: t, respond: func(open *tunnelv1.TunnelOpen, body io.Reader) (*Result, error) {
+	h2 := NewHandler(&stubDoer{t: t, respond: func(open *tunnelv2.TunnelOpen, body io.Reader) (*Result, error) {
 		pr, pw := io.Pipe()
 		go func() { <-release; _ = pw.Close() }()
 		return &Result{Status: 200, Body: pr}, nil
 	}})
 	h2.SetSend(cap.send)
 	h2.Handle(openMsg("dup"))
-	cap.waitFor(t, func(m *tunnelv1.TunnelMessage) bool {
+	cap.waitFor(t, func(m *tunnelv2.TunnelMessage) bool {
 		return m.GetConnectionId() == "dup" && m.GetOpenResult() != nil
 	}, "first OpenResult")
-	h2.Handle(&tunnelv1.TunnelMessage{ConnectionId: "dup", Payload: &tunnelv1.TunnelMessage_Open{
-		Open: &tunnelv1.TunnelOpen{Method: "GET", Path: "/impostor"},
+	h2.Handle(&tunnelv2.TunnelMessage{ConnectionId: "dup", Payload: &tunnelv2.TunnelMessage_Open{
+		Open: &tunnelv2.TunnelOpen{Method: "GET", Path: "/impostor"},
 	}})
 	time.Sleep(50 * time.Millisecond)
 	if n := h2.ActiveConns(); n != 1 {
@@ -195,7 +195,7 @@ func TestRelayPathPassthrough(t *testing.T) {
 		"/api/v1/namespaces/ns/pods/pod+log",
 		"/",
 	} {
-		res, err := r.Do(context.Background(), &tunnelv1.TunnelOpen{Method: "GET", Path: p}, nil)
+		res, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{Method: "GET", Path: p}, nil)
 		if err != nil {
 			t.Fatalf("path %q: %v", p, err)
 		}
@@ -214,10 +214,10 @@ func TestRelayRejectsHeaderInjection(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &Relay{BaseURL: srv.URL, BearerToken: "t"}
-	if _, err := r.Do(context.Background(), &tunnelv1.TunnelOpen{
+	if _, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{
 		Method:  "GET",
 		Path:    "/api",
-		Headers: map[string]string{"X-Evil": "a\r\nInjected: yes"},
+		Headers: map[string]*tunnelv2.StringList{"X-Evil": {Values: []string{"a\r\nInjected: yes"}}},
 	}, nil); err == nil {
 		t.Error("CRLF header value accepted — request smuggling risk")
 	}

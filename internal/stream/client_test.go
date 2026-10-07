@@ -456,6 +456,7 @@ func TestTokenRotationReconnectsWithoutBackoff(t *testing.T) {
 	waitFor(t, "prompt reconnect after rotation", func() bool { return gw.connectCount() >= 9 })
 }
 
+//nolint:staticcheck // SA1019: pins the x/net/http2 transport the h2c client deliberately keeps (stdlib Protocols h2c hangs connect bidi streams)
 func TestDefaultHTTPClientConfiguresHTTP2Keepalive(t *testing.T) {
 	hc, ok := DefaultHTTPClient("http://gw.example").(*http.Client)
 	if !ok {
