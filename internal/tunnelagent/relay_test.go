@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	tunnelv2 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2"
 )
@@ -173,6 +174,54 @@ func TestRelayUpgradePassthrough(t *testing.T) {
 	}
 	if string(buf) != "ping-frames" {
 		t.Errorf("echo = %q", buf)
+	}
+}
+
+// TestRelayUpgradeBufferedTail mirrors the hub-side M1W9 N3c read-ahead
+// hazard on the agent: apiserver bytes written together with the 101 head
+// land in the relay's bufio.Reader and must be delivered by res.Body, not
+// dropped.
+func TestRelayUpgradeBufferedTail(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		br := bufio.NewReader(conn)
+		if _, err := http.ReadRequest(br); err != nil {
+			return
+		}
+		// 101 head and the first protocol bytes in a single write.
+		_, _ = conn.Write([]byte("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: SPDY/3.1\r\n\r\nearly-frames"))
+		<-time.After(2 * time.Second)
+	}()
+
+	r := &Relay{BaseURL: "http://" + ln.Addr().String(), BearerToken: "sa-token-123"}
+	res, err := r.Do(context.Background(), &tunnelv2.TunnelOpen{
+		Method:          "GET",
+		Path:            "/api/v1/namespaces/default/pods/p/portforward",
+		UpgradeExpected: true,
+	}, strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.Status != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d, want 101", res.Status)
+	}
+	buf := make([]byte, len("early-frames"))
+	if _, err := io.ReadFull(res.Body, buf); err != nil {
+		t.Fatalf("read buffered tail: %v", err)
+	}
+	if string(buf) != "early-frames" {
+		t.Errorf("buffered tail = %q", buf)
 	}
 }
 
