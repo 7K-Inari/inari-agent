@@ -131,6 +131,7 @@ func NewConnectClient(address string, token TokenSource, agentVersion, tenantID 
 // instead of only tripping the receive dead-man switch (issue #28).
 func DefaultHTTPClient(address string) connect.HTTPClient {
 	if strings.HasPrefix(address, "http://") {
+		//nolint:staticcheck // SA1019: net/http Protocols h2c hangs connect bidi streams; keep x/net/http2 until verified
 		return &http.Client{Transport: &http2.Transport{
 			AllowHTTP: true,
 			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
@@ -148,6 +149,7 @@ func DefaultHTTPClient(address string) connect.HTTPClient {
 	}
 	// Enable HTTP/2 keepalive pings on the https path too: ConfigureTransports
 	// returns the underlying *http2.Transport the stdlib delegates to.
+	//nolint:staticcheck // SA1019: keep parity with the h2c path above (stdlib Protocols h2c hangs connect bidi streams); migrate both together once verified
 	if h2, err := http2.ConfigureTransports(t1); err == nil {
 		h2.ReadIdleTimeout = 30 * time.Second
 		h2.PingTimeout = 15 * time.Second
