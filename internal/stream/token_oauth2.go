@@ -53,7 +53,12 @@ func (s *OAuth2TokenSource) token(_ context.Context) (*oauth2.Token, error) {
 		// The underlying source outlives any single stream session, so it
 		// must not capture a per-session ctx (refreshes would fail after
 		// the session ends).
-		s.ts = oauth2.ReuseTokenSource(nil, cfg.TokenSource(context.Background()))
+		// expiryDelta must exceed the tunnel client's rotation margin
+		// (min(30s, ttl/4)): otherwise a session rotated early would be
+		// re-opened with the SAME cached token, live only seconds, and
+		// rotate again immediately — the double-rotation churn that makes
+		// access-info flap at every token cycle.
+		s.ts = oauth2.ReuseTokenSourceWithExpiry(nil, cfg.TokenSource(context.Background()), 45*time.Second)
 	}
 	ts := s.ts
 	s.mu.Unlock()
