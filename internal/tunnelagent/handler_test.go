@@ -322,3 +322,49 @@ func TestHandlerMaxLifetime(t *testing.T) {
 		t.Errorf("close reason = %q", cls.GetClose().GetReason())
 	}
 }
+
+// TestOutboundPumpFramesOwnTheirBytes is the N3c regression gate: the
+// session send queue is asynchronous (client.go buffers messages on a
+// channel drained by a separate send pump), so a frame that aliases the
+// pump's read buffer can be clobbered by the next Read before the sender
+// marshals it — this destroyed the apiserver's first upgraded frames and
+// broke port-forward. The capture below retains the slice (no copy), the
+// only honest model of a marshal-later sender: with buffer aliasing the
+// retained slices all point into one array and the corruption shows up
+// when they are read back after the pump finishes.
+func TestOutboundPumpFramesOwnTheirBytes(t *testing.T) {
+	var mu sync.Mutex
+	var retained [][]byte
+	h := NewHandler(&stubDoer{t: t, respond: func(open *tunnelv2.TunnelOpen, body io.Reader) (*Result, error) {
+		return &Result{Status: 200, Body: io.NopCloser(strings.NewReader("alpha-beta-gamma-delta"))}, nil
+	}})
+	h.FrameSize = 4 // force many small frames, the upgrade-greeting shape
+	h.SetSend(func(m *tunnelv2.TunnelMessage) {
+		if f := m.GetFrame(); f != nil {
+			mu.Lock()
+			retained = append(retained, f.GetData()) // no copy, like the async send pump
+			mu.Unlock()
+		}
+	})
+
+	h.Handle(openMsg("b1"))
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(retained)
+		mu.Unlock()
+		if n >= 6 { // 22 payload bytes / 4-byte frames = 6 frames
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var got strings.Builder
+	for _, d := range retained {
+		got.Write(d)
+	}
+	if got.String() != "alpha-beta-gamma-delta" {
+		t.Fatalf("retained frames reassembled to %q, want %q — frames must not alias the pump read buffer", got.String(), "alpha-beta-gamma-delta")
+	}
+}

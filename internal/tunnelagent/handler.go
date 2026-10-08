@@ -279,8 +279,15 @@ func (h *Handler) outboundPump(ctx context.Context, cs *connState, body io.Reade
 			if !h.chargeBytes(cs, int64(n)) {
 				return "" // cap path already sent Close{byte-cap-exceeded}
 			}
+			// The send queue is asynchronous: the frame must own a copy of
+			// the bytes — reusing buf lets the next Read clobber the frame
+			// before the send pump marshals it (N3c port-forward corruption:
+			// the apiserver's first upgraded frames were overwritten by the
+			// following reads).
+			data := make([]byte, n)
+			copy(data, buf[:n])
 			h.send(cs, &tunnelv2.TunnelMessage{ConnectionId: cs.id, Payload: &tunnelv2.TunnelMessage_Frame{
-				Frame: &tunnelv2.TunnelFrame{Data: buf[:n]},
+				Frame: &tunnelv2.TunnelFrame{Data: data},
 			}})
 		}
 		if err != nil {
