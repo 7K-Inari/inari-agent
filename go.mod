@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	connectrpc.com/connect v1.21.0
 	connectrpc.com/connect/v2 v2.0.0
-	github.com/7K-Inari/inari-api v0.6.1-0.20261008052711-490fc94aa5c7
+	github.com/7K-Inari/inari-api v0.6.1-0.20261008193724-f311c232c21e
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-logr/logr v1.4.4
@@ -13,7 +13,7 @@ require (
 	github.com/google/go-github/v68 v68.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/prometheus/client_golang v1.25.0
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.37.0
 	google.golang.org/protobuf v1.36.12
 	k8s.io/api v0.37.1
