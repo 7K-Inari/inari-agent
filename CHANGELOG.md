@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.6.0](https://github.com/7K-Inari/inari-agent/compare/v0.5.1...v0.6.0) (2026-10-09)
+
+
+### Features
+
+* **agent:** stream-aware /readyz with disconnect grace period ([6f39b42](https://github.com/7K-Inari/inari-agent/commit/6f39b422daa3036792dccb48826b566f486a0d62))
+* **chart:** HA active-passive posture (leader election, PDB, spread) ([1c21fa7](https://github.com/7K-Inari/inari-agent/commit/1c21fa74cd97241297a3103b397de9efe326d987))
+* **command:** W2 agent credential redemption and per-command ArgoCD bearer ([#37](https://github.com/7K-Inari/inari-agent/issues/37)) ([20684b7](https://github.com/7K-Inari/inari-agent/commit/20684b7d707431c33585865a94b7373c8bddc1db))
+* HA active-passive posture (leader election, PDB, stream-aware readiness) ([ea8c068](https://github.com/7K-Inari/inari-agent/commit/ea8c0684d5dd3b055cb485be8a7109dde56737c4))
+* **release:** per-merge edge releases (vX.Y.Z-&lt;sha&gt; + moving edge channel) ([#38](https://github.com/7K-Inari/inari-agent/issues/38)) ([aa70d82](https://github.com/7K-Inari/inari-agent/commit/aa70d82086a423c6ea0fdb418e23c6a16bb0bc68))
+* **tunnelagent:** in-cluster kubectl tunnel relay binary + chart (plan §8) ([#49](https://github.com/7K-Inari/inari-agent/issues/49)) ([99217e7](https://github.com/7K-Inari/inari-agent/commit/99217e7de3dcbe318213cda754c4520c6fd57b00))
+* **tunnelagent:** migrate to inari.tunnel.v2 multi-valued headers ([c2ac227](https://github.com/7K-Inari/inari-agent/commit/c2ac2271b5e6672bfb56d5c15e2695ecbb1eba31))
+* **tunnelagent:** migrate to inari.tunnel.v2 multi-valued headers ([c5ba7ca](https://github.com/7K-Inari/inari-agent/commit/c5ba7ca8077182950ac2447b5d5a69a83b3603f4))
+
+
+### Bug Fixes
+
+* **agent:** grant events RBAC for leader-election recording ([7bce302](https://github.com/7K-Inari/inari-agent/commit/7bce30204b9d1040a1a69870362e1660d51ca424))
+* **agent:** grant events RBAC for leader-election recording ([b23a862](https://github.com/7K-Inari/inari-agent/commit/b23a8625d469c86306a9cfa44783fe71f4e02cd5))
+* **chart,agent:** guard HA misconfigurations (active-active, PDB deadlock, negative grace) ([0f23f8a](https://github.com/7K-Inari/inari-agent/commit/0f23f8a88508e3d8ba7ec781c5fd3aca606ea78f))
+* **tunnelagent:** canonicalize inbound header keys in applyHeaders (qa) ([d619522](https://github.com/7K-Inari/inari-agent/commit/d6195227bb142c91aa5a0c6a197e88ccb1bdfc9e))
+* **tunnelagent:** copy outbound frame bytes before queueing (N3c port-forward corruption) ([#59](https://github.com/7K-Inari/inari-agent/issues/59)) ([b2d3a41](https://github.com/7K-Inari/inari-agent/commit/b2d3a41b0d1c1fcf3ac6b70b6eea1eccb308a69f))
+* **tunnelagent:** force fresh token on session rotation (stop access-info flap) ([76beeec](https://github.com/7K-Inari/inari-agent/commit/76beeecee5ce55f891b02063771e26d5043e37d8))
+* **tunnelagent:** force fresh token on session rotation (stop access-info flap) ([8183635](https://github.com/7K-Inari/inari-agent/commit/818363584f2331312daa0fe2ee92e0431d2d5a7e))
+* **tunnelagent:** re-add Connection: Upgrade on upgrade requests (review) ([af5a41f](https://github.com/7K-Inari/inari-agent/commit/af5a41f089fbd07ee89335b512081f0260dc871b))
+
 ## [0.5.1](https://github.com/7K-Inari/inari-agent/compare/v0.5.0...v0.5.1) (2026-09-24)
 
 
