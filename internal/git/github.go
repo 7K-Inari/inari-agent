@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/go-github/v68/github"
+	"github.com/google/go-github/v92/github"
 )
 
 // NewGitHubProvider returns a Provider authenticating as a GitHub App
@@ -17,13 +17,13 @@ import (
 // httptest URL).
 func NewGitHubProvider(creds AppCredentials, apiBase string) (Provider, error) {
 	src := &appTokenSource{creds: creds}
-	gh := github.NewClient(&http.Client{Transport: src.RoundTripper(nil)})
-	if err := setAPIBase(gh, apiBase); err != nil {
+	gh, err := newClient(&http.Client{Transport: src.RoundTripper(nil)}, apiBase)
+	if err != nil {
 		return nil, err
 	}
 	src.newToken = func(ctx context.Context, appJWT string) (string, time.Time, error) {
-		appClient := github.NewClient(&http.Client{Transport: &jwtTransport{jwt: appJWT}})
-		if err := setAPIBase(appClient, apiBase); err != nil {
+		appClient, err := newClient(&http.Client{Transport: &jwtTransport{jwt: appJWT}}, apiBase)
+		if err != nil {
 			return "", time.Time{}, err
 		}
 		tok, _, err := appClient.Apps.CreateInstallationToken(ctx, creds.InstallationID, nil)
@@ -35,22 +35,21 @@ func NewGitHubProvider(creds AppCredentials, apiBase string) (Provider, error) {
 	return &gitHubProvider{gh: gh}, nil
 }
 
-// setAPIBase points a client at a non-default API base (tests). apiBase
-// may be empty for github.com.
-func setAPIBase(c *github.Client, apiBase string) error {
-	if apiBase == "" {
-		return nil
+// newClient builds a client, pointed at apiBase when non-empty (tests).
+func newClient(httpClient *http.Client, apiBase string) (*github.Client, error) {
+	opts := []github.ClientOptionsFunc{github.WithHTTPClient(httpClient)}
+	if apiBase != "" {
+		u, err := url.Parse(apiBase)
+		if err != nil {
+			return nil, fmt.Errorf("git: bad API base %q: %w", apiBase, err)
+		}
+		if !strings.HasSuffix(u.Path, "/") {
+			u.Path += "/"
+		}
+		base := u.String()
+		opts = append(opts, github.WithURLs(&base, &base))
 	}
-	u, err := url.Parse(apiBase)
-	if err != nil {
-		return fmt.Errorf("git: bad API base %q: %w", apiBase, err)
-	}
-	if !strings.HasSuffix(u.Path, "/") {
-		u.Path += "/"
-	}
-	c.BaseURL = u
-	c.UploadURL = u
-	return nil
+	return github.NewClient(opts...)
 }
 
 type jwtTransport struct{ jwt string }
@@ -81,10 +80,7 @@ func (p *gitHubProvider) CommitFiles(ctx context.Context, target Target, files [
 	if !changed {
 		return headSHA, false, nil
 	}
-	_, _, err = p.gh.Git.UpdateRef(ctx, owner, repo, &github.Reference{
-		Ref:    github.Ptr("refs/heads/" + target.Branch),
-		Object: &github.GitObject{SHA: github.Ptr(sha)},
-	}, false)
+	_, _, err = p.gh.Git.UpdateRef(ctx, owner, repo, "heads/"+target.Branch, github.UpdateRef{SHA: sha})
 	if err != nil {
 		return "", false, fmt.Errorf("git: update ref heads/%s in %s: %w", target.Branch, target.Repo, err)
 	}
@@ -100,17 +96,17 @@ func (p *gitHubProvider) commitOnto(ctx context.Context, owner, repo, baseSHA st
 	}
 	entries := make([]*github.TreeEntry, 0, len(files))
 	for _, f := range files {
-		blob, _, err := p.gh.Git.CreateBlob(ctx, owner, repo, &github.Blob{
-			Content:  github.Ptr(string(f.Content)),
-			Encoding: github.Ptr("utf-8"),
+		blob, _, err := p.gh.Git.CreateBlob(ctx, owner, repo, github.Blob{
+			Content:  new(string(f.Content)),
+			Encoding: new("utf-8"),
 		})
 		if err != nil {
 			return "", false, fmt.Errorf("git: create blob for %s: %w", f.Path, err)
 		}
 		entries = append(entries, &github.TreeEntry{
-			Path: github.Ptr(target.FullPath(f.Path)),
-			Mode: github.Ptr("100644"),
-			Type: github.Ptr("blob"),
+			Path: new(target.FullPath(f.Path)),
+			Mode: new("100644"),
+			Type: new("blob"),
 			SHA:  blob.SHA,
 		})
 	}
@@ -121,10 +117,10 @@ func (p *gitHubProvider) commitOnto(ctx context.Context, owner, repo, baseSHA st
 	if tree.GetSHA() == baseCommit.GetTree().GetSHA() {
 		return baseSHA, false, nil
 	}
-	commit, _, err := p.gh.Git.CreateCommit(ctx, owner, repo, &github.Commit{
-		Message: github.Ptr(message),
+	commit, _, err := p.gh.Git.CreateCommit(ctx, owner, repo, github.Commit{
+		Message: new(message),
 		Tree:    tree,
-		Parents: []*github.Commit{{SHA: github.Ptr(baseSHA)}},
+		Parents: []*github.Commit{{SHA: new(baseSHA)}},
 	}, nil)
 	if err != nil {
 		return "", false, fmt.Errorf("git: create commit: %w", err)
@@ -145,9 +141,9 @@ func (p *gitHubProvider) OpenPR(ctx context.Context, target Target, files []File
 		if !errors.As(err, &ghErr) || ghErr.Response.StatusCode != http.StatusNotFound {
 			return "", fmt.Errorf("git: get topic branch %s: %w", branch, err)
 		}
-		topic, _, err = p.gh.Git.CreateRef(ctx, owner, repo, &github.Reference{
-			Ref:    github.Ptr("refs/heads/" + branch),
-			Object: &github.GitObject{SHA: baseRef.GetObject().SHA},
+		topic, _, err = p.gh.Git.CreateRef(ctx, owner, repo, github.CreateRef{
+			Ref: "refs/heads/" + branch,
+			SHA: baseRef.GetObject().GetSHA(),
 		})
 		if err != nil {
 			return "", fmt.Errorf("git: create topic branch %s: %w", branch, err)
@@ -158,10 +154,7 @@ func (p *gitHubProvider) OpenPR(ctx context.Context, target Target, files []File
 		return "", err
 	}
 	if changed {
-		if _, _, err := p.gh.Git.UpdateRef(ctx, owner, repo, &github.Reference{
-			Ref:    github.Ptr("refs/heads/" + branch),
-			Object: &github.GitObject{SHA: github.Ptr(sha)},
-		}, false); err != nil {
+		if _, _, err := p.gh.Git.UpdateRef(ctx, owner, repo, "heads/"+branch, github.UpdateRef{SHA: sha}); err != nil {
 			return "", fmt.Errorf("git: update topic branch %s: %w", branch, err)
 		}
 	}
@@ -177,11 +170,11 @@ func (p *gitHubProvider) OpenPR(ctx context.Context, target Target, files []File
 	if len(prs) > 0 {
 		return prs[0].GetHTMLURL(), nil
 	}
-	pr, _, err := p.gh.PullRequests.Create(ctx, owner, repo, &github.NewPullRequest{
-		Title: github.Ptr(title),
-		Head:  github.Ptr(branch),
-		Base:  github.Ptr(target.Branch),
-		Body:  github.Ptr(body),
+	pr, _, err := p.gh.PullRequests.Create(ctx, owner, repo, github.CreatePullRequest{
+		Title: new(title),
+		Head:  branch,
+		Base:  target.Branch,
+		Body:  new(body),
 	})
 	if err != nil {
 		var ghErr *github.ErrorResponse
@@ -213,9 +206,9 @@ func (p *gitHubProvider) DeleteFiles(ctx context.Context, target Target, paths [
 	entries := make([]*github.TreeEntry, 0, len(paths))
 	for _, path := range paths {
 		entries = append(entries, &github.TreeEntry{
-			Path: github.Ptr(target.FullPath(path)),
-			Mode: github.Ptr("100644"),
-			Type: github.Ptr("blob"),
+			Path: new(target.FullPath(path)),
+			Mode: new("100644"),
+			Type: new("blob"),
 			SHA:  nil,
 		})
 	}
@@ -226,18 +219,15 @@ func (p *gitHubProvider) DeleteFiles(ctx context.Context, target Target, paths [
 	if tree.GetSHA() == baseCommit.GetTree().GetSHA() {
 		return headSHA, false, nil
 	}
-	commit, _, err := p.gh.Git.CreateCommit(ctx, owner, repo, &github.Commit{
-		Message: github.Ptr(message),
+	commit, _, err := p.gh.Git.CreateCommit(ctx, owner, repo, github.Commit{
+		Message: new(message),
 		Tree:    tree,
-		Parents: []*github.Commit{{SHA: github.Ptr(headSHA)}},
+		Parents: []*github.Commit{{SHA: new(headSHA)}},
 	}, nil)
 	if err != nil {
 		return "", false, fmt.Errorf("git: create commit: %w", err)
 	}
-	if _, _, err := p.gh.Git.UpdateRef(ctx, owner, repo, &github.Reference{
-		Ref:    github.Ptr("refs/heads/" + target.Branch),
-		Object: &github.GitObject{SHA: commit.SHA},
-	}, false); err != nil {
+	if _, _, err := p.gh.Git.UpdateRef(ctx, owner, repo, "heads/"+target.Branch, github.UpdateRef{SHA: commit.GetSHA()}); err != nil {
 		return "", false, fmt.Errorf("git: update ref heads/%s in %s: %w", target.Branch, target.Repo, err)
 	}
 	return commit.GetSHA(), true, nil

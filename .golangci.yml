@@ -8,6 +8,12 @@ linters:
     - ineffassign
     - staticcheck
     - unused
+  settings:
+    govet:
+      disable:
+        # New in go1.27; reports "cannot inline: type parameter inference is
+        # not yet supported" on go-github v92 generic calls (github.Ptr).
+        - inline
 
 formatters:
   enable:
