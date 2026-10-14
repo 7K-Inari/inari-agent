@@ -97,16 +97,16 @@ func (p *gitHubProvider) commitOnto(ctx context.Context, owner, repo, baseSHA st
 	entries := make([]*github.TreeEntry, 0, len(files))
 	for _, f := range files {
 		blob, _, err := p.gh.Git.CreateBlob(ctx, owner, repo, github.Blob{
-			Content:  github.Ptr(string(f.Content)),
-			Encoding: github.Ptr("utf-8"),
+			Content:  new(string(f.Content)),
+			Encoding: new("utf-8"),
 		})
 		if err != nil {
 			return "", false, fmt.Errorf("git: create blob for %s: %w", f.Path, err)
 		}
 		entries = append(entries, &github.TreeEntry{
-			Path: github.Ptr(target.FullPath(f.Path)),
-			Mode: github.Ptr("100644"),
-			Type: github.Ptr("blob"),
+			Path: new(target.FullPath(f.Path)),
+			Mode: new("100644"),
+			Type: new("blob"),
 			SHA:  blob.SHA,
 		})
 	}
@@ -118,9 +118,9 @@ func (p *gitHubProvider) commitOnto(ctx context.Context, owner, repo, baseSHA st
 		return baseSHA, false, nil
 	}
 	commit, _, err := p.gh.Git.CreateCommit(ctx, owner, repo, github.Commit{
-		Message: github.Ptr(message),
+		Message: new(message),
 		Tree:    tree,
-		Parents: []*github.Commit{{SHA: github.Ptr(baseSHA)}},
+		Parents: []*github.Commit{{SHA: new(baseSHA)}},
 	}, nil)
 	if err != nil {
 		return "", false, fmt.Errorf("git: create commit: %w", err)
@@ -171,10 +171,10 @@ func (p *gitHubProvider) OpenPR(ctx context.Context, target Target, files []File
 		return prs[0].GetHTMLURL(), nil
 	}
 	pr, _, err := p.gh.PullRequests.Create(ctx, owner, repo, github.CreatePullRequest{
-		Title: github.Ptr(title),
+		Title: new(title),
 		Head:  branch,
 		Base:  target.Branch,
-		Body:  github.Ptr(body),
+		Body:  new(body),
 	})
 	if err != nil {
 		var ghErr *github.ErrorResponse
@@ -206,9 +206,9 @@ func (p *gitHubProvider) DeleteFiles(ctx context.Context, target Target, paths [
 	entries := make([]*github.TreeEntry, 0, len(paths))
 	for _, path := range paths {
 		entries = append(entries, &github.TreeEntry{
-			Path: github.Ptr(target.FullPath(path)),
-			Mode: github.Ptr("100644"),
-			Type: github.Ptr("blob"),
+			Path: new(target.FullPath(path)),
+			Mode: new("100644"),
+			Type: new("blob"),
 			SHA:  nil,
 		})
 	}
@@ -220,9 +220,9 @@ func (p *gitHubProvider) DeleteFiles(ctx context.Context, target Target, paths [
 		return headSHA, false, nil
 	}
 	commit, _, err := p.gh.Git.CreateCommit(ctx, owner, repo, github.Commit{
-		Message: github.Ptr(message),
+		Message: new(message),
 		Tree:    tree,
-		Parents: []*github.Commit{{SHA: github.Ptr(headSHA)}},
+		Parents: []*github.Commit{{SHA: new(headSHA)}},
 	}, nil)
 	if err != nil {
 		return "", false, fmt.Errorf("git: create commit: %w", err)
