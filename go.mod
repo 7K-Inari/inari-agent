@@ -3,8 +3,8 @@ module github.com/7K-Inari/inari-agent
 go 1.26.3
 
 require (
-	connectrpc.com/connect v1.21.1
-	github.com/7K-Inari/inari-api v0.6.1-0.20261014191937-1a30c6c847d5
+	connectrpc.com/connect/v2 v2.0.0
+	github.com/7K-Inari/inari-api v0.6.1-0.20261015003247-4a8072241473
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-logr/logr v1.4.4

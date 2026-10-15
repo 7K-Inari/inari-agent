@@ -9,7 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"connectrpc.com/connect"
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	tunnelv2 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2"
@@ -31,7 +32,7 @@ type Client struct {
 	Address string
 	// HTTPClient optionally overrides the client (tests). Defaults to
 	// stream.DefaultHTTPClient(Address).
-	HTTPClient connect.HTTPClient
+	HTTPClient connecthttp.HTTPClient
 	// Token supplies short-lived OIDC JWTs per connect.
 	Token stream.TokenSource
 	// Handler receives inbound tunnel traffic.
@@ -117,9 +118,13 @@ func (c *Client) session(ctx context.Context) error {
 	if httpClient == nil {
 		httpClient = stream.DefaultHTTPClient(c.Address)
 	}
-	svc := tunnelv2connect.NewTunnelServiceClient(httpClient, c.Address)
-	bidi := svc.Connect(ctx)
-	bidi.RequestHeader().Set("Authorization", "Bearer "+token)
+	svc := tunnelv2connect.NewTunnelServiceClient(connect.NewClient(connecthttp.NewTransport(httpClient, c.Address, connecthttp.WithReadMaxBytes(0))))
+	ctx, info := connect.NewClientContext(ctx)
+	bidi, err := svc.Connect(ctx)
+	if err != nil {
+		return err
+	}
+	info.RequestHeader().Set("Authorization", "Bearer "+token)
 
 	// Wire the handler's outbound path to this session's send pump; reset
 	// all connections when the session ends (the hub's side is gone).

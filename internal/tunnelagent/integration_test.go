@@ -12,7 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 
 	tunnelv2 "github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2"
 	"github.com/7K-Inari/inari-api/gen/go/inari/tunnel/v2/tunnelv2connect"
@@ -38,10 +39,11 @@ type fakeKubeproxy struct {
 	onSession func() error
 }
 
-func (f *fakeKubeproxy) Connect(ctx context.Context, s *connect.BidiStream[tunnelv2.TunnelMessage, tunnelv2.TunnelMessage]) error {
+func (f *fakeKubeproxy) Connect(ctx context.Context, s tunnelv2connect.TunnelServiceConnectServerStream) error {
+	info, _ := connect.CallInfoForServerContext(ctx)
 	n := f.sessions.Add(1)
 	if n == 1 {
-		f.authToken <- s.RequestHeader().Get("Authorization")
+		f.authToken <- info.RequestHeader().Get("Authorization")
 	}
 	f.mu.Lock()
 	f.send = s.Send
@@ -99,9 +101,10 @@ func (f *fakeKubeproxy) receive(t *testing.T, what string) *tunnelv2.TunnelMessa
 
 func newFakeKubeproxyServer(t *testing.T, f *fakeKubeproxy) (addr string, cleanup func()) {
 	t.Helper()
+	server := connect.NewServer()
+	tunnelv2connect.RegisterTunnelServiceHandler(server, f)
 	mux := http.NewServeMux()
-	path, handler := tunnelv2connect.NewTunnelServiceHandler(f)
-	mux.Handle(path, handler)
+	connecthttp.Mount(mux, server)
 	// Unencrypted HTTP/2 (h2c) via Protocols — h2c.NewHandler is deprecated.
 	protocols := &http.Protocols{}
 	protocols.SetUnencryptedHTTP2(true)
@@ -290,7 +293,7 @@ func TestTunnelReconnectAfterStreamDrop(t *testing.T) {
 	// reconnecting with backoff.
 	kp.onSession = func() error {
 		time.Sleep(20 * time.Millisecond)
-		return connect.NewError(connect.CodeUnavailable, io.ErrUnexpectedEOF)
+		return connect.NewError(connect.CodeUnavailable, io.ErrUnexpectedEOF.Error()).WithCause(io.ErrUnexpectedEOF)
 	}
 	addr, cleanup := newFakeKubeproxyServer(t, kp)
 	defer cleanup()

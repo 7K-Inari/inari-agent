@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"connectrpc.com/connect"
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 	"github.com/7K-Inari/inari-api/gen/go/inari/agent/v1/agentv1connect"
@@ -75,39 +76,43 @@ type ConnectRedeemer struct {
 // NewConnectRedeemer builds a redeemer for the given control-plane base URL.
 // Token supplies the agent's short-lived cluster JWT per call; httpClient
 // may be nil (defaults to the stream's proxy-aware HTTP client).
-func NewConnectRedeemer(address string, token stream.TokenSource, httpClient connect.HTTPClient) *ConnectRedeemer {
+func NewConnectRedeemer(address string, token stream.TokenSource, httpClient connecthttp.HTTPClient) *ConnectRedeemer {
 	if httpClient == nil {
 		httpClient = stream.DefaultHTTPClient(address)
 	}
-	auth := connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
-		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+	// v2 client interceptors wrap the whole call before marshaling; the
+	// bearer header goes on the call's CallInfo.
+	auth := func(next connect.ClientFunc) connect.ClientFunc {
+		return func(ctx context.Context, spec connect.Spec) (connect.ClientStream, error) {
 			tok, err := token.Token(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("redeem: fetch agent token: %w", err)
 			}
-			req.Header().Set("Authorization", "Bearer "+tok)
-			return next(ctx, req)
+			if info, ok := connect.CallInfoForClientContext(ctx); ok {
+				info.RequestHeader().Set("Authorization", "Bearer "+tok)
+			}
+			return next(ctx, spec)
 		}
-	}))
+	}
 	return &ConnectRedeemer{
-		client: agentv1connect.NewAgentCredentialsServiceClient(httpClient, address, auth),
+		client: agentv1connect.NewAgentCredentialsServiceClient(connect.NewClient(connecthttp.NewTransport(httpClient, address, connecthttp.WithReadMaxBytes(0)), auth)),
 	}
 }
 
 // Redeem implements UserCredentialRedeemer. Exactly one RPC per call: no
 // retry loop, so a revoked credential can never be masked by re-redemption.
 func (r *ConnectRedeemer) Redeem(ctx context.Context, ref string) (string, time.Time, error) {
-	resp, err := r.client.RedeemUserCredential(ctx, connect.NewRequest(&agentv1.RedeemUserCredentialRequest{
+	resp, err := r.client.RedeemUserCredential(ctx, &agentv1.RedeemUserCredentialRequest{
 		CredentialRef: ref,
-	}))
+	})
 	if err != nil {
 		return "", time.Time{}, classifyRedeemError(err)
 	}
 	var exp time.Time
-	if resp.Msg.ExpiresAt != nil {
-		exp = resp.Msg.ExpiresAt.AsTime()
+	if resp.ExpiresAt != nil {
+		exp = resp.ExpiresAt.AsTime()
 	}
-	return resp.Msg.BearerToken, exp, nil
+	return resp.BearerToken, exp, nil
 }
 
 // classifyRedeemError maps Connect codes to typed terminal RedeemErrors.

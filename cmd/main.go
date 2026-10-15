@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -151,7 +153,7 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 	r.Meta = metaClient
 	r.SecretReader = &registration.KubeSecretReader{Client: kubeClient}
 	r.Registrar = &registration.ConnectRegistrar{
-		Client:            agentv1connect.NewRegistrationServiceClient(stream.DefaultHTTPClient(controlPlane), controlPlane),
+		Client:            agentv1connect.NewRegistrationServiceClient(connect.NewClient(connecthttp.NewTransport(stream.DefaultHTTPClient(controlPlane), controlPlane, connecthttp.WithReadMaxBytes(0)))),
 		AgentVersion:      version,
 		TenantID:          os.Getenv("INARI_TENANT_ID"),
 		ControlPlane:      controlPlane,
