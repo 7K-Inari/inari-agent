@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c" //nolint:staticcheck // SA1019: net/http Protocols h2c hangs connect bidi streams; keep h2c until verified (test-only)
 	"google.golang.org/protobuf/types/known/anypb"
@@ -71,9 +72,10 @@ func (f *fakeGateway) recordConnect(auth string) int {
 
 func (f *fakeGateway) Connect(
 	ctx context.Context,
-	stream *connect.BidiStream[agentv1.ConnectRequest, agentv1.ConnectResponse],
+	stream agentv1connect.EventStreamServiceConnectServerStream,
 ) error {
-	conn := f.recordConnect(stream.RequestHeader().Get("Authorization"))
+	info, _ := connect.CallInfoForServerContext(ctx)
+	conn := f.recordConnect(info.RequestHeader().Get("Authorization"))
 
 	// connect-go bidi streams are not safe for concurrent Send; serialize.
 	var sendMu sync.Mutex
@@ -209,7 +211,9 @@ func (f *fakeGateway) received() []*agentv1.Event {
 func newTestClient(t *testing.T, gw *fakeGateway, opts ...func(*ConnectClient)) *ConnectClient {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle(agentv1connect.NewEventStreamServiceHandler(gw))
+	server := connect.NewServer()
+	agentv1connect.RegisterEventStreamServiceHandler(server, gw)
+	connecthttp.Mount(mux, server, connecthttp.WithReadMaxBytes(0))
 	srv := httptest.NewUnstartedServer(mux)
 	srv.EnableHTTP2 = false                                   // h2c: prior-knowledge HTTP/2 without TLS
 	srv.Config.Handler = h2c.NewHandler(mux, &http2.Server{}) //nolint:staticcheck // SA1019: see import comment

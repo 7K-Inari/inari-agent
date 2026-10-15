@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
-
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 	"github.com/7K-Inari/inari-api/gen/go/inari/agent/v1/agentv1connect"
 )
@@ -39,17 +37,17 @@ func (r *ConnectRegistrar) Register(ctx context.Context, bootstrapToken string) 
 	if bootstrapToken == "" {
 		return nil, fmt.Errorf("registration: bootstrap token is empty")
 	}
-	resp, err := r.Client.RegisterCluster(ctx, connect.NewRequest(&agentv1.RegisterClusterRequest{
+	resp, err := r.Client.RegisterCluster(ctx, &agentv1.RegisterClusterRequest{
 		RegistrationToken: bootstrapToken,
 		AgentVersion:      r.AgentVersion,
 		ContractVersion:   ContractVersion,
 		ClusterLabels:     r.ClusterLabels,
 		KubernetesVersion: r.KubernetesVersion,
-	}))
+	})
 	if err != nil {
 		return nil, fmt.Errorf("registration: exchange bootstrap token: %w", err)
 	}
-	msg := resp.Msg
+	msg := resp
 	if msg.GetClusterId() == "" || msg.GetClientId() == "" || msg.GetOidcIssuerUrl() == "" {
 		return nil, fmt.Errorf("registration: incomplete response from control plane")
 	}

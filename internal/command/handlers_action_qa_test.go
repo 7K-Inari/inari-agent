@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
 	"k8s.io/apimachinery/pkg/runtime"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
@@ -19,8 +18,8 @@ import (
 // Server redeems successfully but returns an EMPTY bearer: the command must
 // fail closed, never silently fall back to the static break-glass token.
 func TestInvokeActionEmptyRedeemedBearerFailsClosed(t *testing.T) {
-	srv, _ := redeemServer(t, func(context.Context, *connect.Request[agentv1.RedeemUserCredentialRequest]) (*connect.Response[agentv1.RedeemUserCredentialResponse], error) {
-		return connect.NewResponse(&agentv1.RedeemUserCredentialResponse{BearerToken: ""}), nil
+	srv, _ := redeemServer(t, func(context.Context, *agentv1.RedeemUserCredentialRequest) (*agentv1.RedeemUserCredentialResponse, error) {
+		return &agentv1.RedeemUserCredentialResponse{BearerToken: ""}, nil
 	})
 	r := NewConnectRedeemer(srv.URL, staticTokenSource{"agent-jwt"}, srv.Client())
 	tok, _, err := r.Redeem(context.Background(), "ref-1")

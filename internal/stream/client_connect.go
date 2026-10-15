@@ -14,7 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"connectrpc.com/connect"
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	"golang.org/x/net/http2"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -75,7 +76,7 @@ type ConnectClient struct {
 	Address string
 	// HTTPClient optionally overrides the client (tests, custom transports).
 	// Defaults to an HTTP/2 client honouring proxy env vars.
-	HTTPClient connect.HTTPClient
+	HTTPClient connecthttp.HTTPClient
 	// Token supplies short-lived OIDC JWTs per connect.
 	Token TokenSource
 
@@ -129,7 +130,7 @@ func NewConnectClient(address string, token TokenSource, agentVersion, tenantID 
 // HTTP/2 keepalive pings are enabled on both paths so a silently blackholed
 // connection (e.g. an LB idle-timeout drop) surfaces as a receive error
 // instead of only tripping the receive dead-man switch (issue #28).
-func DefaultHTTPClient(address string) connect.HTTPClient {
+func DefaultHTTPClient(address string) connecthttp.HTTPClient {
 	if strings.HasPrefix(address, "http://") {
 		//nolint:staticcheck // SA1019: net/http Protocols h2c hangs connect bidi streams; keep x/net/http2 until verified
 		return &http.Client{Transport: &http2.Transport{
@@ -308,15 +309,16 @@ func (c *ConnectClient) session(ctx context.Context) error {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	auth := connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
-		return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-			req.Header().Set("Authorization", "Bearer "+token)
-			return next(ctx, req)
-		}
-	}))
-	streamClient := agentv1connect.NewEventStreamServiceClient(httpClient, c.Address, auth)
-	bidi := streamClient.Connect(ctx)
-	bidi.RequestHeader().Set("Authorization", "Bearer "+token)
+	// The EventStreamService's only RPC is the bidi Connect stream, so the
+	// bearer token rides on the stream's request headers (a v1 unary
+	// interceptor here never fired for streams and is gone in v2).
+	streamClient := agentv1connect.NewEventStreamServiceClient(connect.NewClient(connecthttp.NewTransport(httpClient, c.Address, connecthttp.WithReadMaxBytes(0))))
+	ctx, info := connect.NewClientContext(ctx)
+	info.RequestHeader().Set("Authorization", "Bearer "+token)
+	bidi, err := streamClient.Connect(ctx)
+	if err != nil {
+		return err
+	}
 
 	// Handshake: first message on every (re)connect carries the last known
 	// state checksum.

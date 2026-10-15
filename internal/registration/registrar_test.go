@@ -2,13 +2,13 @@ package registration
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
+	"connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -27,24 +27,26 @@ type fakeRegistrationHandler struct {
 
 func (f *fakeRegistrationHandler) RegisterCluster(
 	_ context.Context,
-	req *connect.Request[agentv1.RegisterClusterRequest],
-) (*connect.Response[agentv1.RegisterClusterResponse], error) {
-	f.gotToken = req.Msg.GetRegistrationToken()
-	f.gotLabels = req.Msg.GetClusterLabels()
+	req *agentv1.RegisterClusterRequest,
+) (*agentv1.RegisterClusterResponse, error) {
+	f.gotToken = req.GetRegistrationToken()
+	f.gotLabels = req.GetClusterLabels()
 	if f.err != nil {
 		return nil, f.err
 	}
-	return connect.NewResponse(f.resp), nil
+	return f.resp, nil
 }
 
 func newTestRegistrar(t *testing.T, h agentv1connect.RegistrationServiceHandler) *ConnectRegistrar {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle(agentv1connect.NewRegistrationServiceHandler(h))
+	server := connect.NewServer()
+	agentv1connect.RegisterRegistrationServiceHandler(server, h)
+	connecthttp.Mount(mux, server, connecthttp.WithReadMaxBytes(0))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return &ConnectRegistrar{
-		Client:            agentv1connect.NewRegistrationServiceClient(srv.Client(), srv.URL),
+		Client:            agentv1connect.NewRegistrationServiceClient(connect.NewClient(connecthttp.NewTransport(srv.Client(), srv.URL, connecthttp.WithReadMaxBytes(0)))),
 		AgentVersion:      "0.1.0-test",
 		TenantID:          "tenant-1",
 		ControlPlane:      srv.URL,
@@ -99,7 +101,7 @@ func TestRegisterExchangesTokenForCredentials(t *testing.T) {
 }
 
 func TestRegisterRejectsExpiredToken(t *testing.T) {
-	h := &fakeRegistrationHandler{err: connect.NewError(connect.CodeUnauthenticated, errors.New("token expired"))}
+	h := &fakeRegistrationHandler{err: connect.NewError(connect.CodeUnauthenticated, "token expired")}
 	r := newTestRegistrar(t, h)
 	if _, err := r.Register(context.Background(), "stale"); err == nil {
 		t.Fatal("expected error for expired token")
