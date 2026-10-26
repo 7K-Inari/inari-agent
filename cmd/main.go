@@ -226,9 +226,9 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 //	                         (keys app-id, installation-id, private-key)
 //	INARI_GIT_CREDS_NAMESPACE Secret namespace (default: agent namespace)
 //	INARI_STATE_REPO         manual override state repo (owner/name); the
-	//	                         server-bound baseline repo (from registration)
-	//	                         takes precedence when set.
-	//	INARI_STATE_REPO_ORG     GitHub org for the default state repo
+//	                         server-bound baseline repo (from registration)
+//	                         takes precedence when set.
+//	INARI_STATE_REPO_ORG     GitHub org for the default state repo
 //	INARI_ARGOCD_MODE        bundle (default) | byo
 //	INARI_ARGOCD_NAMESPACE   ArgoCD install namespace (default argocd)
 //	INARI_ARGOCD_API_URL     ArgoCD API base for invoke-action (default
