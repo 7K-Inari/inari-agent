@@ -9,14 +9,18 @@ import (
 
 	"github.com/go-logr/logr"
 	"google.golang.org/protobuf/types/known/anypb"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/metadata"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 
 	"github.com/7K-Inari/inari-agent/internal/capability"
 	"github.com/7K-Inari/inari-agent/internal/command"
+	"github.com/7K-Inari/inari-agent/internal/git"
 	"github.com/7K-Inari/inari-agent/internal/health"
 	"github.com/7K-Inari/inari-agent/internal/registration"
 	"github.com/7K-Inari/inari-agent/internal/stream"
@@ -130,6 +134,93 @@ func newTestReconciler(fc *fakeStreamClient, watcher *fakeWatcher) (*AgentReconc
 		},
 	}
 	return r, reg
+}
+
+func TestPersistCredentialsIncludesBaselineRepo(t *testing.T) {
+	r := &AgentReconciler{
+		Log:  logr.Discard(),
+		Kube: k8sfake.NewSimpleClientset(),
+	}
+	creds := &registration.Credentials{
+		TenantID:     "tenant-1",
+		ClusterID:    "cluster-1",
+		ClientID:     "cluster-cluster-1",
+		TokenURL:     "https://keycloak/token",
+		ControlPlane: "https://gw",
+		SecretRef:    registration.SecretReference{Name: "s", Namespace: "inari-system", Key: "client-secret"},
+		BaselineRepo: "myorg/platform-baseline",
+	}
+	if err := r.persistCredentials(context.Background(), creds); err != nil {
+		t.Fatalf("persistCredentials: %v", err)
+	}
+	cm, err := r.Kube.CoreV1().ConfigMaps("inari-system").Get(context.Background(), registrationConfigMap, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get ConfigMap: %v", err)
+	}
+	if got := cm.Data["baseline-repo"]; got != "myorg/platform-baseline" {
+		t.Errorf("baseline-repo = %q, want %q", got, "myorg/platform-baseline")
+	}
+}
+
+func TestLoadPersistedCredentialsReadsBaselineRepo(t *testing.T) {
+	r := &AgentReconciler{
+		Log:  logr.Discard(),
+		Kube: k8sfake.NewSimpleClientset(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: registrationConfigMap, Namespace: "inari-system"},
+			Data: map[string]string{
+				"tenant-id":        "tenant-1",
+				"cluster-id":       "cluster-1",
+				"client-id":        "cluster-cluster-1",
+				"token-url":        "https://keycloak/token",
+				"control-plane":    "https://gw",
+				"secret-store":     "store",
+				"secret-name":      "s",
+				"secret-namespace": "inari-system",
+				"secret-key":       "client-secret",
+				"baseline-repo":    "myorg/platform-baseline",
+			},
+		}),
+	}
+	creds, err := r.loadPersistedCredentials(context.Background())
+	if err != nil {
+		t.Fatalf("loadPersistedCredentials: %v", err)
+	}
+	if creds == nil {
+		t.Fatal("expected credentials, got nil")
+	}
+	if creds.BaselineRepo != "myorg/platform-baseline" {
+		t.Errorf("BaselineRepo = %q, want %q", creds.BaselineRepo, "myorg/platform-baseline")
+	}
+}
+
+func TestLoadPersistedCredentialsEmptyBaselineRepo(t *testing.T) {
+	r := &AgentReconciler{
+		Log:  logr.Discard(),
+		Kube: k8sfake.NewSimpleClientset(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: registrationConfigMap, Namespace: "inari-system"},
+			Data: map[string]string{
+				"tenant-id":        "tenant-1",
+				"cluster-id":       "cluster-1",
+				"client-id":        "cluster-cluster-1",
+				"token-url":        "https://keycloak/token",
+				"control-plane":    "https://gw",
+				"secret-store":     "store",
+				"secret-name":      "s",
+				"secret-namespace": "inari-system",
+				"secret-key":       "client-secret",
+			},
+		}),
+	}
+	creds, err := r.loadPersistedCredentials(context.Background())
+	if err != nil {
+		t.Fatalf("loadPersistedCredentials: %v", err)
+	}
+	if creds == nil {
+		t.Fatal("expected credentials, got nil")
+	}
+	if creds.BaselineRepo != "" {
+		t.Errorf("BaselineRepo = %q, want empty", creds.BaselineRepo)
+	}
 }
 
 func TestStandaloneModeBlocksUntilCancelled(t *testing.T) {
@@ -343,6 +434,42 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+func TestDispatchRoutesGitopsConfigUpdate(t *testing.T) {
+	fc := &fakeStreamClient{events: make(chan *agentv1.Event, 8)}
+	r := &AgentReconciler{Log: logr.Discard()}
+	handler := command.NewDispatcher()
+	deps := &command.GitOpsDeps{Git: git.NewMemProvider(), DefaultStateRepo: "org/old-baseline"}
+	kube := k8sfake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "inari-agent-registration", Namespace: "inari-system"},
+		Data:       map[string]string{"baseline-repo": "org/old-baseline"},
+	})
+	handler.Register(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE,
+		command.GitopsConfigUpdateHandler(deps, kube, "inari-system"))
+
+	payload, _ := anypb.New(&agentv1.GitopsConfigUpdate{CommandId: "cmd-rebind", BaselineRepo: "org/new-baseline"})
+	ev := &agentv1.Event{
+		EventId: "evt-rebind",
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE),
+		Payload: payload,
+	}
+	r.dispatch(context.Background(), fc, nil, handler, ev)
+
+	waitFor(t, "gitops-config-update acked", func() bool {
+		for _, ev := range fc.sentEvents() {
+			if agentv1.EventTypeFromString(ev.Type) == agentv1.EventType_EVENT_TYPE_COMMAND_ACK {
+				var ack agentv1.CommandAck
+				if err := ev.Payload.UnmarshalTo(&ack); err == nil && ack.CommandId == "cmd-rebind" {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	if deps.DefaultStateRepo != "org/new-baseline" {
+		t.Errorf("DefaultStateRepo = %q, want %q", deps.DefaultStateRepo, "org/new-baseline")
+	}
 }
 
 func TestLifecycleFailsCommandsClosedUntilStreamConnects(t *testing.T) {

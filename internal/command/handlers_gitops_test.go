@@ -217,6 +217,94 @@ func TestApplyBundleRejectsEscapingFilePath(t *testing.T) {
 	}
 }
 
+func TestGitopsConfigUpdateHandler(t *testing.T) {
+	kube := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "inari-agent-registration", Namespace: "inari-system"},
+		Data: map[string]string{
+			"tenant-id":     "tenant-1",
+			"cluster-id":    "cluster-1",
+			"client-id":     "cluster-cluster-1",
+			"token-url":     "https://keycloak/token",
+			"control-plane": "https://gw",
+			"baseline-repo": "org/old-baseline",
+		},
+	})
+	gp := git.NewMemProvider()
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/old-baseline"}
+	h := GitopsConfigUpdateHandler(deps, kube, "inari-system")
+
+	a, _ := anypb.New(&agentv1.GitopsConfigUpdate{CommandId: "cmd-rebind", BaselineRepo: "org/new-baseline"})
+	result, msg, err := h(context.Background(), &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE),
+		Payload: a,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
+		t.Fatalf("result=%v msg=%q", result, msg)
+	}
+	if deps.DefaultStateRepo != "org/new-baseline" {
+		t.Errorf("DefaultStateRepo = %q, want %q", deps.DefaultStateRepo, "org/new-baseline")
+	}
+	cm, err := kube.CoreV1().ConfigMaps("inari-system").Get(context.Background(), "inari-agent-registration", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cm.Data["baseline-repo"]; got != "org/new-baseline" {
+		t.Errorf("persisted baseline-repo = %q, want %q", got, "org/new-baseline")
+	}
+}
+
+func TestGitopsConfigUpdateHandlerIdempotent(t *testing.T) {
+	kube := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "inari-agent-registration", Namespace: "inari-system"},
+		Data: map[string]string{
+			"baseline-repo": "org/same-baseline",
+		},
+	})
+	gp := git.NewMemProvider()
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/same-baseline"}
+	h := GitopsConfigUpdateHandler(deps, kube, "inari-system")
+
+	a, _ := anypb.New(&agentv1.GitopsConfigUpdate{CommandId: "cmd-same", BaselineRepo: "org/same-baseline"})
+	result, msg, err := h(context.Background(), &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE),
+		Payload: a,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
+		t.Fatalf("result=%v msg=%q", result, msg)
+	}
+	if deps.DefaultStateRepo != "org/same-baseline" {
+		t.Errorf("DefaultStateRepo = %q, want %q", deps.DefaultStateRepo, "org/same-baseline")
+	}
+}
+
+func TestGitopsConfigUpdateHandlerRejectsEmptyRepo(t *testing.T) {
+	kube := fake.NewSimpleClientset()
+	gp := git.NewMemProvider()
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/old-baseline"}
+	h := GitopsConfigUpdateHandler(deps, kube, "inari-system")
+
+	a, _ := anypb.New(&agentv1.GitopsConfigUpdate{CommandId: "cmd-empty", BaselineRepo: ""})
+	result, msg, err := h(context.Background(), &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE),
+		Payload: a,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+		t.Fatalf("empty repo must fail: %v", result)
+	}
+	if !strings.Contains(msg, "empty") {
+		t.Errorf("message = %q, want mention of empty", msg)
+	}
+}
+
 func mustStruct(t *testing.T, m map[string]interface{}) *structpb.Struct {
 	t.Helper()
 	s, err := structpb.NewStruct(m)

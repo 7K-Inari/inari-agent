@@ -27,9 +27,13 @@ type GitOpsConfig struct {
 
 	// Git writes to the tenant state repo (GitHub App auth via ESO).
 	Git git.Provider
+	// BoundStateRepo is the server-assigned baseline repo from registration
+	// ("owner/name"). It takes precedence over StateRepo and the convention.
+	BoundStateRepo string
 	// StateRepo overrides the default "<tenant>-inari-state" repo
 	// ("owner/name"); the tenant prefix is applied when empty and
-	// StateRepoOrg is set.
+	// StateRepoOrg is set. This is a manual override; the server binding
+	// (BoundStateRepo) takes precedence.
 	StateRepo    string
 	StateRepoOrg string
 
@@ -57,7 +61,11 @@ type GitOpsConfig struct {
 }
 
 // stateRepo resolves the platform-owned repo for the tenant.
+// Resolution order: explicit server binding > env override > convention.
 func (c *GitOpsConfig) stateRepo(tenantID string) string {
+	if c.BoundStateRepo != "" {
+		return c.BoundStateRepo
+	}
 	if c.StateRepo != "" {
 		return c.StateRepo
 	}
@@ -82,11 +90,12 @@ func (c *GitOpsConfig) configure(ctx context.Context, handler command.Handler, t
 	if rgds == nil {
 		rgds = render.DynamicRGDGetter{Dyn: c.Dyn}
 	}
-	deps := command.GitOpsDeps{Git: c.Git, DefaultStateRepo: c.stateRepo(tenantID)}
-	d.Register(agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE, command.RenderRGDInstanceHandler(deps, rgds))
-	d.Register(agentv1.EventType_EVENT_TYPE_APPLY_BUNDLE, command.ApplyBundleHandler(deps, bundles))
-	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_APPLY, command.SecretStoreApplyHandler(deps))
-	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_DELETE, command.SecretStoreDeleteHandler(deps))
+	deps := &command.GitOpsDeps{Git: c.Git, DefaultStateRepo: c.stateRepo(tenantID)}
+	d.Register(agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE, command.RenderRGDInstanceHandler(*deps, rgds))
+	d.Register(agentv1.EventType_EVENT_TYPE_APPLY_BUNDLE, command.ApplyBundleHandler(*deps, bundles))
+	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_APPLY, command.SecretStoreApplyHandler(*deps))
+	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_DELETE, command.SecretStoreDeleteHandler(*deps))
+	d.Register(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE, command.GitopsConfigUpdateHandler(deps, c.Kube, c.JournalNamespace))
 
 	lifecycle := &argocd.Lifecycle{
 		Kube:      c.Kube,

@@ -108,6 +108,54 @@ func TestRegisterRejectsExpiredToken(t *testing.T) {
 	}
 }
 
+func TestRegisterMapsBaselineRepo(t *testing.T) {
+	h := &fakeRegistrationHandler{resp: &agentv1.RegisterClusterResponse{
+		ClusterId:     "cluster-42",
+		OidcIssuerUrl: "https://keycloak.example/realms/inari",
+		ClientId:      "cluster-cluster-42",
+		ClientSecretDelivery: &agentv1.SecretDeliveryReference{
+			EsoSecretStore:  "inari-cluster-store",
+			SecretName:      "cluster-42-oidc",
+			SecretNamespace: "inari-system",
+			SecretKey:       "client-secret",
+		},
+		BaselineRepo: "myorg/platform-baseline",
+	}}
+	r := newTestRegistrar(t, h)
+
+	creds, err := r.Register(context.Background(), "bootstrap-token-abc")
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if creds.BaselineRepo != "myorg/platform-baseline" {
+		t.Errorf("BaselineRepo = %q, want %q", creds.BaselineRepo, "myorg/platform-baseline")
+	}
+}
+
+func TestRegisterMapsEmptyBaselineRepo(t *testing.T) {
+	h := &fakeRegistrationHandler{resp: &agentv1.RegisterClusterResponse{
+		ClusterId:     "cluster-42",
+		OidcIssuerUrl: "https://keycloak.example/realms/inari",
+		ClientId:      "cluster-cluster-42",
+		ClientSecretDelivery: &agentv1.SecretDeliveryReference{
+			EsoSecretStore:  "inari-cluster-store",
+			SecretName:      "cluster-42-oidc",
+			SecretNamespace: "inari-system",
+			SecretKey:       "client-secret",
+		},
+		// BaselineRepo intentionally empty (old server)
+	}}
+	r := newTestRegistrar(t, h)
+
+	creds, err := r.Register(context.Background(), "bootstrap-token-abc")
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if creds.BaselineRepo != "" {
+		t.Errorf("BaselineRepo = %q, want empty", creds.BaselineRepo)
+	}
+}
+
 func TestKubeSecretReaderWaitsForESOSecret(t *testing.T) {
 	ref := SecretReference{Name: "cluster-42-oidc", Namespace: "inari-system", Key: "client-secret"}
 	client := fake.NewSimpleClientset()

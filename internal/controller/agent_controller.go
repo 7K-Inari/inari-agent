@@ -235,6 +235,7 @@ func (r *AgentReconciler) loadPersistedCredentials(ctx context.Context) (*regist
 			Namespace: d["secret-namespace"],
 			Key:       d["secret-key"],
 		},
+		BaselineRepo: d["baseline-repo"],
 	}
 	if creds.ClusterID == "" || creds.ClientID == "" || creds.TokenURL == "" {
 		return nil, nil
@@ -259,6 +260,7 @@ func (r *AgentReconciler) persistCredentials(ctx context.Context, creds *registr
 			"secret-name":      creds.SecretRef.Name,
 			"secret-namespace": creds.SecretRef.Namespace,
 			"secret-key":       creds.SecretRef.Key,
+			"baseline-repo":    creds.BaselineRepo,
 		},
 	}
 	_, err := r.Kube.CoreV1().ConfigMaps("inari-system").Create(ctx, cm, metav1.CreateOptions{})
@@ -300,7 +302,8 @@ func (r *AgentReconciler) dispatch(
 	case agentv1.EventType_EVENT_TYPE_APPLY_BUNDLE,
 		agentv1.EventType_EVENT_TYPE_REGISTER_ARGOCD_APP,
 		agentv1.EventType_EVENT_TYPE_INVOKE_ACTION,
-		agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE:
+		agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE,
+		agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE:
 		r.handleCommand(ctx, client, handler, ev)
 	default:
 		// Compatibility contract: unknown event types are dropped-and-logged,

@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/7K-Inari/inari-agent/internal/git"
 	"github.com/7K-Inari/inari-agent/internal/render"
@@ -96,6 +98,38 @@ func RenderRGDInstanceHandler(deps GitOpsDeps, getter render.RGDGetter) KindHand
 			return agentv1.CommandResult_COMMAND_RESULT_UNSPECIFIED, "", err
 		}
 		return agentv1.CommandResult_COMMAND_RESULT_APPLIED, outcome, nil
+	}
+}
+
+// GitopsConfigUpdateHandler rebinds the agent to a different baseline repo.
+// It updates the in-memory DefaultStateRepo and persists the new binding to
+// the registration ConfigMap so it survives restarts.
+func GitopsConfigUpdateHandler(deps *GitOpsDeps, kube kubernetes.Interface, namespace string) KindHandler {
+	return func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
+		var m agentv1.GitopsConfigUpdate
+		if err := ev.Payload.UnmarshalTo(&m); err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, "", fmt.Errorf("decode: %w", err)
+		}
+		if m.BaselineRepo == "" {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, "baseline_repo must not be empty", nil
+		}
+		if m.BaselineRepo == deps.DefaultStateRepo {
+			return agentv1.CommandResult_COMMAND_RESULT_APPLIED, "no change", nil
+		}
+		deps.DefaultStateRepo = m.BaselineRepo
+		// Persist the new binding so it survives restarts.
+		cm, err := kube.CoreV1().ConfigMaps(namespace).Get(ctx, "inari-agent-registration", metav1.GetOptions{})
+		if err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, fmt.Sprintf("get registration ConfigMap: %v", err), nil
+		}
+		if cm.Data == nil {
+			cm.Data = map[string]string{}
+		}
+		cm.Data["baseline-repo"] = m.BaselineRepo
+		if _, err := kube.CoreV1().ConfigMaps(namespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, fmt.Sprintf("update registration ConfigMap: %v", err), nil
+		}
+		return agentv1.CommandResult_COMMAND_RESULT_APPLIED, "rebound to " + m.BaselineRepo, nil
 	}
 }
 

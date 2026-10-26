@@ -174,6 +174,12 @@ func commandIDOf(ev *agentv1.Event) (string, error) {
 			return "", fmt.Errorf("command: decode secret-store-delete: %w", err)
 		}
 		return requireID(m.CommandId)
+	case agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE:
+		var m agentv1.GitopsConfigUpdate
+		if err := ev.Payload.UnmarshalTo(&m); err != nil {
+			return "", fmt.Errorf("command: decode gitops-config-update: %w", err)
+		}
+		return requireID(m.CommandId)
 	default:
 		return "", fmt.Errorf("command: unknown event type %q", ev.Type)
 	}

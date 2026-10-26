@@ -67,3 +67,50 @@ func TestGitOpsStateRepoDefault(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestGitOpsStateRepoResolutionOrder(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      GitOpsConfig
+		tenantID string
+		want     string
+	}{
+		{
+			name:     "explicit binding wins over env and convention",
+			cfg:      GitOpsConfig{BoundStateRepo: "org/bound-repo", StateRepo: "org/env-repo", StateRepoOrg: "org"},
+			tenantID: "acme",
+			want:     "org/bound-repo",
+		},
+		{
+			name:     "env override wins over convention when no binding",
+			cfg:      GitOpsConfig{StateRepo: "org/env-repo", StateRepoOrg: "org"},
+			tenantID: "acme",
+			want:     "org/env-repo",
+		},
+		{
+			name:     "convention when neither binding nor env",
+			cfg:      GitOpsConfig{StateRepoOrg: "org"},
+			tenantID: "acme",
+			want:     "org/acme-inari-state",
+		},
+		{
+			name:     "empty when nothing set",
+			cfg:      GitOpsConfig{},
+			tenantID: "acme",
+			want:     "",
+		},
+		{
+			name:     "binding wins even when env is set",
+			cfg:      GitOpsConfig{BoundStateRepo: "org/bound-repo", StateRepo: "org/env-repo"},
+			tenantID: "acme",
+			want:     "org/bound-repo",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.stateRepo(tt.tenantID); got != tt.want {
+				t.Errorf("stateRepo(%q) = %q, want %q", tt.tenantID, got, tt.want)
+			}
+		})
+	}
+}

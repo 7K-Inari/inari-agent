@@ -64,6 +64,7 @@ func (r *ConnectRegistrar) Register(ctx context.Context, bootstrapToken string) 
 			Namespace: delivery.GetSecretNamespace(),
 			Key:       delivery.GetSecretKey(),
 		},
+		BaselineRepo: msg.GetBaselineRepo(),
 	}
 	if ts := msg.GetCredentialsExpireHint(); ts != nil {
 		creds.ExpiresHint = ts.AsTime()

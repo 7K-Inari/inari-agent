@@ -3,14 +3,13 @@ module github.com/7K-Inari/inari-agent
 go 1.26.3
 
 require (
-	connectrpc.com/connect/v2 v2.0.0
+	connectrpc.com/connect/v2 v2.0.2
 	github.com/7K-Inari/inari-api v0.6.1-0.20261015003247-4a8072241473
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-logr/logr v1.4.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-github/v92 v92.0.0
-	github.com/google/go-github/v93 v93.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/prometheus/client_golang v1.25.0
 	golang.org/x/net v0.61.0
@@ -97,3 +96,5 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 )
+
+replace github.com/7K-Inari/inari-api => /projects/7K-Inari/inari-api
