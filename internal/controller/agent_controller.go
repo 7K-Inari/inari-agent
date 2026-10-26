@@ -136,6 +136,7 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 		if r.NewRedeemer != nil {
 			redeemer = r.NewRedeemer(creds, clientSecret)
 		}
+		r.GitOps.BoundStateRepo = creds.BaselineRepo
 		if err := r.GitOps.configure(ctx, handler, creds.TenantID, redeemer); err != nil {
 			return fmt.Errorf("agent lifecycle: gitops setup: %w", err)
 		}

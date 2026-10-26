@@ -91,10 +91,10 @@ func (c *GitOpsConfig) configure(ctx context.Context, handler command.Handler, t
 		rgds = render.DynamicRGDGetter{Dyn: c.Dyn}
 	}
 	deps := &command.GitOpsDeps{Git: c.Git, DefaultStateRepo: c.stateRepo(tenantID)}
-	d.Register(agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE, command.RenderRGDInstanceHandler(*deps, rgds))
-	d.Register(agentv1.EventType_EVENT_TYPE_APPLY_BUNDLE, command.ApplyBundleHandler(*deps, bundles))
-	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_APPLY, command.SecretStoreApplyHandler(*deps))
-	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_DELETE, command.SecretStoreDeleteHandler(*deps))
+	d.Register(agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE, command.RenderRGDInstanceHandler(deps, rgds))
+	d.Register(agentv1.EventType_EVENT_TYPE_APPLY_BUNDLE, command.ApplyBundleHandler(deps, bundles))
+	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_APPLY, command.SecretStoreApplyHandler(deps))
+	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_DELETE, command.SecretStoreDeleteHandler(deps))
 	d.Register(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE, command.GitopsConfigUpdateHandler(deps, c.Kube, c.JournalNamespace))
 
 	lifecycle := &argocd.Lifecycle{

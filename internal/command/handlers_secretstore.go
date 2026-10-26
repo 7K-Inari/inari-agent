@@ -40,7 +40,7 @@ func providerFromProto(m *agentv1.SecretStoreApply) (render.SecretStoreProvider,
 
 // SecretStoreApplyHandler renders an ESO SecretStore/ClusterSecretStore
 // manifest and commits it to the tenant state repo.
-func SecretStoreApplyHandler(deps GitOpsDeps) KindHandler {
+func SecretStoreApplyHandler(deps *GitOpsDeps) KindHandler {
 	return func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
 		var m agentv1.SecretStoreApply
 		if err := ev.Payload.UnmarshalTo(&m); err != nil {
@@ -73,7 +73,7 @@ func SecretStoreApplyHandler(deps GitOpsDeps) KindHandler {
 // SecretStoreDeleteHandler prunes a previously applied ESO SecretStore
 // manifest from the tenant state repo. Deleting an absent file is a no-op,
 // keeping redelivery idempotent.
-func SecretStoreDeleteHandler(deps GitOpsDeps) KindHandler {
+func SecretStoreDeleteHandler(deps *GitOpsDeps) KindHandler {
 	return func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
 		var m agentv1.SecretStoreDelete
 		if err := ev.Payload.UnmarshalTo(&m); err != nil {

@@ -71,7 +71,7 @@ func (d GitOpsDeps) commit(ctx context.Context, target git.Target, files []git.F
 
 // RenderRGDInstanceHandler renders a KRO instance and commits it to the
 // tenant state repo.
-func RenderRGDInstanceHandler(deps GitOpsDeps, getter render.RGDGetter) KindHandler {
+func RenderRGDInstanceHandler(deps *GitOpsDeps, getter render.RGDGetter) KindHandler {
 	return func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
 		var m agentv1.RenderRgdInstance
 		if err := ev.Payload.UnmarshalTo(&m); err != nil {
@@ -135,7 +135,7 @@ func GitopsConfigUpdateHandler(deps *GitOpsDeps, kube kubernetes.Interface, name
 
 // ApplyBundleHandler fetches a bundle (OCI artifact or git source,
 // checksum-verified) and commits it to the tenant state repo.
-func ApplyBundleHandler(deps GitOpsDeps, bundles render.BundleSource) KindHandler {
+func ApplyBundleHandler(deps *GitOpsDeps, bundles render.BundleSource) KindHandler {
 	return func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
 		var m agentv1.ApplyBundle
 		if err := ev.Payload.UnmarshalTo(&m); err != nil {

@@ -90,7 +90,7 @@ func renderEvent(t *testing.T, m *agentv1.RenderRgdInstance) *agentv1.Event {
 
 func TestRenderRGDInstanceHandlerDirectCommit(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	params, _ := structpb.NewStruct(map[string]interface{}{"image": "nginx:1.27"})
 	h := RenderRGDInstanceHandler(deps, fakeGetter{obj: testRGD()})
 
@@ -121,7 +121,7 @@ func TestRenderRGDInstanceHandlerDirectCommit(t *testing.T) {
 
 func TestRenderRGDInstanceHandlerPullRequest(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	h := RenderRGDInstanceHandler(deps, fakeGetter{obj: testRGD()})
 
 	result, msg, err := h(context.Background(), renderEvent(t, &agentv1.RenderRgdInstance{
@@ -145,7 +145,7 @@ func TestRenderRGDInstanceHandlerPullRequest(t *testing.T) {
 
 func TestRenderHandlerRejectsForeignRepo(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	h := RenderRGDInstanceHandler(deps, fakeGetter{obj: testRGD()})
 
 	result, _, err := h(context.Background(), renderEvent(t, &agentv1.RenderRgdInstance{
@@ -168,7 +168,7 @@ func TestRenderHandlerRejectsForeignRepo(t *testing.T) {
 
 func TestApplyBundleHandler(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	bundles := &fakeBundles{files: []git.File{{Path: "manifests/app.yaml", Content: []byte("apiVersion: v1\n")}}}
 	h := ApplyBundleHandler(deps, bundles)
 
@@ -197,7 +197,7 @@ func TestApplyBundleHandler(t *testing.T) {
 
 func TestApplyBundleRejectsEscapingFilePath(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	bundles := &fakeBundles{files: []git.File{{Path: "../../other-instance/app.yaml", Content: []byte("x")}}}
 	h := ApplyBundleHandler(deps, bundles)
 
