@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -9,6 +10,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/kubernetes/fake"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
@@ -302,6 +305,116 @@ func TestGitopsConfigUpdateHandlerRejectsEmptyRepo(t *testing.T) {
 	}
 	if !strings.Contains(msg, "empty") {
 		t.Errorf("message = %q, want mention of empty", msg)
+	}
+}
+
+func TestGitopsConfigUpdateHandlerMissingConfigMap(t *testing.T) {
+	kube := fake.NewSimpleClientset() // no ConfigMap
+	gp := git.NewMemProvider()
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/old-baseline"}
+	h := GitopsConfigUpdateHandler(deps, kube, "inari-system")
+
+	a, _ := anypb.New(&agentv1.GitopsConfigUpdate{CommandId: "cmd-missing", BaselineRepo: "org/new-baseline"})
+	result, msg, err := h(context.Background(), &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE),
+		Payload: a,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+		t.Fatalf("missing ConfigMap must fail: %v", result)
+	}
+	if !strings.Contains(msg, "get registration ConfigMap") {
+		t.Errorf("message = %q, want mention of ConfigMap get failure", msg)
+	}
+	// In-memory deps should NOT be mutated when persistence fails.
+	if deps.DefaultStateRepo != "org/old-baseline" {
+		t.Errorf("DefaultStateRepo mutated despite persistence failure: %q", deps.DefaultStateRepo)
+	}
+}
+
+func TestGitopsConfigUpdateHandlerConfigMapUpdateFailure(t *testing.T) {
+	// Pre-create the ConfigMap but use a reactor to fail the Update call.
+	kube := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "inari-agent-registration", Namespace: "inari-system"},
+		Data:       map[string]string{"baseline-repo": "org/old-baseline"},
+	})
+	kube.PrependReactor("update", "configmaps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("simulated update failure")
+	})
+	gp := git.NewMemProvider()
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/old-baseline"}
+	h := GitopsConfigUpdateHandler(deps, kube, "inari-system")
+
+	a, _ := anypb.New(&agentv1.GitopsConfigUpdate{CommandId: "cmd-update-fail", BaselineRepo: "org/new-baseline"})
+	result, msg, err := h(context.Background(), &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE),
+		Payload: a,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+		t.Fatalf("update failure must fail: %v", result)
+	}
+	if !strings.Contains(msg, "update registration ConfigMap") {
+		t.Errorf("message = %q, want mention of ConfigMap update failure", msg)
+	}
+	// In-memory deps should NOT be mutated when persistence fails.
+	if deps.DefaultStateRepo != "org/old-baseline" {
+		t.Errorf("DefaultStateRepo mutated despite persistence failure: %q", deps.DefaultStateRepo)
+	}
+}
+
+func TestGitopsConfigUpdateHandlerRejectsInvalidRepoFormat(t *testing.T) {
+	kube := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "inari-agent-registration", Namespace: "inari-system"},
+		Data:       map[string]string{"baseline-repo": "org/old-baseline"},
+	})
+	gp := git.NewMemProvider()
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/old-baseline"}
+	h := GitopsConfigUpdateHandler(deps, kube, "inari-system")
+
+	for _, bad := range []string{"noslash", "a/b/c", "/leading", "trailing/", "//"} {
+		a, _ := anypb.New(&agentv1.GitopsConfigUpdate{CommandId: "cmd-bad", BaselineRepo: bad})
+		result, msg, err := h(context.Background(), &agentv1.Event{
+			Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE),
+			Payload: a,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+			t.Errorf("repo %q must fail: %v", bad, result)
+		}
+		if !strings.Contains(msg, "owner/name") {
+			t.Errorf("repo %q: message = %q, want mention of owner/name", bad, msg)
+		}
+	}
+	// Deps must remain unchanged after all rejections.
+	if deps.DefaultStateRepo != "org/old-baseline" {
+		t.Errorf("DefaultStateRepo mutated despite rejections: %q", deps.DefaultStateRepo)
+	}
+}
+
+func TestGitopsConfigUpdateHandlerRejectsMalformedPayload(t *testing.T) {
+	kube := fake.NewSimpleClientset()
+	gp := git.NewMemProvider()
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/old-baseline"}
+	h := GitopsConfigUpdateHandler(deps, kube, "inari-system")
+
+	// Payload is a different message type entirely.
+	a, _ := anypb.New(&agentv1.ApplyBundle{CommandId: "cmd-wrong"})
+	result, _, err := h(context.Background(), &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE),
+		Payload: a,
+	})
+	if err == nil {
+		t.Fatal("expected decode error")
+	}
+	if result != agentv1.CommandResult_COMMAND_RESULT_FAILED {
+		t.Errorf("result = %v, want FAILED", result)
 	}
 }
 

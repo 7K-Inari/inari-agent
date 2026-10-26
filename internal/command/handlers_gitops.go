@@ -113,11 +113,15 @@ func GitopsConfigUpdateHandler(deps *GitOpsDeps, kube kubernetes.Interface, name
 		if m.BaselineRepo == "" {
 			return agentv1.CommandResult_COMMAND_RESULT_FAILED, "baseline_repo must not be empty", nil
 		}
+		gt := git.Target{Repo: m.BaselineRepo}
+		if _, err := gt.Validate("x/y"); err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, fmt.Sprintf("invalid baseline_repo: %v", err), nil
+		}
 		if m.BaselineRepo == deps.DefaultStateRepo {
 			return agentv1.CommandResult_COMMAND_RESULT_APPLIED, "no change", nil
 		}
-		deps.DefaultStateRepo = m.BaselineRepo
-		// Persist the new binding so it survives restarts.
+		// Persist the new binding first so a failure doesn't leave the
+		// in-memory state inconsistent with the persisted state.
 		cm, err := kube.CoreV1().ConfigMaps(namespace).Get(ctx, "inari-agent-registration", metav1.GetOptions{})
 		if err != nil {
 			return agentv1.CommandResult_COMMAND_RESULT_FAILED, fmt.Sprintf("get registration ConfigMap: %v", err), nil
@@ -129,6 +133,7 @@ func GitopsConfigUpdateHandler(deps *GitOpsDeps, kube kubernetes.Interface, name
 		if _, err := kube.CoreV1().ConfigMaps(namespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
 			return agentv1.CommandResult_COMMAND_RESULT_FAILED, fmt.Sprintf("update registration ConfigMap: %v", err), nil
 		}
+		deps.DefaultStateRepo = m.BaselineRepo
 		return agentv1.CommandResult_COMMAND_RESULT_APPLIED, "rebound to " + m.BaselineRepo, nil
 	}
 }

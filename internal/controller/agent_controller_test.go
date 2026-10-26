@@ -9,9 +9,14 @@ import (
 
 	"github.com/go-logr/logr"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/structpb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/metadata"
@@ -469,6 +474,126 @@ func TestDispatchRoutesGitopsConfigUpdate(t *testing.T) {
 	})
 	if deps.DefaultStateRepo != "org/new-baseline" {
 		t.Errorf("DefaultStateRepo = %q, want %q", deps.DefaultStateRepo, "org/new-baseline")
+	}
+}
+
+// TestEndToEndBaselineBinding exercises the full flow: registration returns a
+// baseline repo, the agent persists it, GitOps handlers are configured with
+// it, a gitops-config-update rebinds, and subsequent render/apply commands
+// target the new repo.
+func TestEndToEndBaselineBinding(t *testing.T) {
+	ctx := context.Background()
+	kube := k8sfake.NewSimpleClientset()
+	gp := git.NewMemProvider()
+
+	// 1. Registration returns a baseline repo.
+	creds := &registration.Credentials{
+		TenantID: "tenant-1", ClusterID: "cluster-1", ClientID: "cluster-cluster-1",
+		TokenURL: "https://keycloak/token", ControlPlane: "https://gw",
+		SecretRef:    registration.SecretReference{Name: "s", Namespace: "inari-system", Key: "client-secret"},
+		BaselineRepo: "myorg/platform-baseline",
+	}
+
+	// 2. Agent persists it (simulating what Start does after register).
+	r := &AgentReconciler{Log: logr.Discard(), Kube: kube}
+	if err := r.persistCredentials(ctx, creds); err != nil {
+		t.Fatal(err)
+	}
+	cm, err := kube.CoreV1().ConfigMaps("inari-system").Get(ctx, registrationConfigMap, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cm.Data["baseline-repo"]; got != "myorg/platform-baseline" {
+		t.Fatalf("persisted baseline-repo = %q, want %q", got, "myorg/platform-baseline")
+	}
+
+	// 3. GitOps configure wires the bound baseline into the handlers.
+	cfg := &GitOpsConfig{
+		Kube:             kube,
+		Dyn:              dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
+		Git:              gp,
+		BoundStateRepo:   creds.BaselineRepo,
+		JournalNamespace: "inari-system",
+	}
+	d := command.NewDispatcher()
+	if err := cfg.configure(ctx, d, creds.TenantID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4. Verify the initial state: render targets the bound baseline.
+	rgd := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "kro.run/v1alpha1",
+		"kind":       "ResourceGraphDefinition",
+		"metadata":   map[string]interface{}{"name": "web-service"},
+		"spec": map[string]interface{}{
+			"schema": map[string]interface{}{
+				"apiVersion": "v1alpha1",
+				"kind":       "WebService",
+				"spec":       map[string]interface{}{"required": []interface{}{"image"}},
+			},
+		},
+	}}
+	listKinds := map[schema.GroupVersionResource]string{
+		{Group: "kro.run", Version: "v1alpha1", Resource: "resourcegraphdefinitions"}: "ResourceGraphDefinitionList",
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, rgd)
+	cfg.Dyn = dyn
+	d2 := command.NewDispatcher()
+	if err := cfg.configure(ctx, d2, creds.TenantID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	params, _ := structpb.NewStruct(map[string]interface{}{"image": "nginx:1.27"})
+	renderPayload, _ := anypb.New(&agentv1.RenderRgdInstance{
+		CommandId: "cmd-render-1", RgdRef: "web-service", InstanceName: "my-web",
+		TargetNamespace: "apps", Parameters: params,
+		Policy: agentv1.CommitPolicy_COMMIT_POLICY_DIRECT_COMMIT,
+	})
+	ack, err := d2.HandleEvent(ctx, &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE),
+		Payload: renderPayload,
+	})
+	if err != nil || ack.Result != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
+		t.Fatalf("render: %+v %v", ack, err)
+	}
+	if len(gp.Commits) != 1 || gp.Commits[0].Target.Repo != "myorg/platform-baseline" {
+		t.Fatalf("render committed to %q, want %q", gp.Commits[0].Target.Repo, "myorg/platform-baseline")
+	}
+
+	// 5. Server pushes a rebind.
+	rebindPayload, _ := anypb.New(&agentv1.GitopsConfigUpdate{CommandId: "cmd-rebind-e2e", BaselineRepo: "myorg/team-a-baseline"})
+	ack, err = d2.HandleEvent(ctx, &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE),
+		Payload: rebindPayload,
+	})
+	if err != nil || ack.Result != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
+		t.Fatalf("rebind: %+v %v", ack, err)
+	}
+
+	// 6. ConfigMap updated.
+	cm, err = kube.CoreV1().ConfigMaps("inari-system").Get(ctx, registrationConfigMap, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cm.Data["baseline-repo"]; got != "myorg/team-a-baseline" {
+		t.Fatalf("post-rebind baseline-repo = %q, want %q", got, "myorg/team-a-baseline")
+	}
+
+	// 7. Subsequent render targets the NEW baseline.
+	renderPayload2, _ := anypb.New(&agentv1.RenderRgdInstance{
+		CommandId: "cmd-render-2", RgdRef: "web-service", InstanceName: "my-web-2",
+		TargetNamespace: "apps", Parameters: params,
+		Policy: agentv1.CommitPolicy_COMMIT_POLICY_DIRECT_COMMIT,
+	})
+	ack, err = d2.HandleEvent(ctx, &agentv1.Event{
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE),
+		Payload: renderPayload2,
+	})
+	if err != nil || ack.Result != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
+		t.Fatalf("render after rebind: %+v %v", ack, err)
+	}
+	if len(gp.Commits) != 2 || gp.Commits[1].Target.Repo != "myorg/team-a-baseline" {
+		t.Fatalf("post-rebind render committed to %q, want %q", gp.Commits[1].Target.Repo, "myorg/team-a-baseline")
 	}
 }
 
