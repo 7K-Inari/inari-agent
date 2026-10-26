@@ -169,7 +169,7 @@ func TestPersistCredentialsIncludesBaselineRepo(t *testing.T) {
 
 func TestLoadPersistedCredentialsReadsBaselineRepo(t *testing.T) {
 	r := &AgentReconciler{
-		Log:  logr.Discard(),
+		Log: logr.Discard(),
 		Kube: k8sfake.NewSimpleClientset(&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: registrationConfigMap, Namespace: "inari-system"},
 			Data: map[string]string{
@@ -200,7 +200,7 @@ func TestLoadPersistedCredentialsReadsBaselineRepo(t *testing.T) {
 
 func TestLoadPersistedCredentialsEmptyBaselineRepo(t *testing.T) {
 	r := &AgentReconciler{
-		Log:  logr.Discard(),
+		Log: logr.Discard(),
 		Kube: k8sfake.NewSimpleClientset(&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: registrationConfigMap, Namespace: "inari-system"},
 			Data: map[string]string{
