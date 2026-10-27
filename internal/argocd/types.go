@@ -6,7 +6,9 @@
 //
 // Hard constraints from the spike: argoproj.io/v1alpha1 only; per-team
 // AppProjects; restrictive BYO installs surface explicit deploy-time
-// errors; ApplicationSet is never required.
+// errors. ApplicationSets are upserted only from server-rendered
+// manifests for fleet addon deployments (Feature C) — the agent never
+// composes them itself.
 package argocd
 
 import (
@@ -26,6 +28,8 @@ var (
 	ApplicationGVR = schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applications"}
 	// AppProjectGVR is argoproj.io/v1alpha1 appprojects.
 	AppProjectGVR = schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "appprojects"}
+	// ApplicationSetGVR is argoproj.io/v1alpha1 applicationsets.
+	ApplicationSetGVR = schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applicationsets"}
 )
 
 // Mode is how the agent relates to the tenant-local ArgoCD (§11/1).
