@@ -24,6 +24,7 @@ import (
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 
+	"github.com/7K-Inari/inari-agent/internal/addonscan"
 	"github.com/7K-Inari/inari-agent/internal/capability"
 	"github.com/7K-Inari/inari-agent/internal/command"
 	"github.com/7K-Inari/inari-agent/internal/health"
@@ -131,6 +132,7 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	}
 
 	var streamer *status.Streamer
+	var scanner *addonscan.Scanner
 	if r.GitOps != nil {
 		var redeemer command.UserCredentialRedeemer
 		if r.NewRedeemer != nil {
@@ -141,6 +143,7 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 			return fmt.Errorf("agent lifecycle: gitops setup: %w", err)
 		}
 		streamer = r.GitOps.streamer(r.Log, r.Dynamic, client)
+		scanner = r.GitOps.addonScanner(r.Meta, client)
 	}
 
 	// Fail closed until the stream is actually up: gate command handling on
@@ -177,6 +180,17 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 			}
 		}
 	}
+	if scanner != nil {
+		prev := onConnectedChange
+		onConnectedChange = func(v bool) {
+			if prev != nil {
+				prev(v)
+			}
+			if v {
+				scanner.Reset(context.Background())
+			}
+		}
+	}
 	if onConnectedChange != nil {
 		if tracker, ok := client.(interface{ SetOnConnectedChange(func(bool)) }); ok {
 			tracker.SetOnConnectedChange(onConnectedChange)
@@ -186,11 +200,14 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	log.Info("agent registered and connecting",
 		"tenant", creds.TenantID, "cluster", creds.ClusterID, "controlPlane", creds.ControlPlane)
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 	go func() { errCh <- client.Run(ctx) }()
 	go func() { errCh <- aggregator.Run(ctx) }()
 	if streamer != nil {
 		go func() { errCh <- streamer.Run(ctx) }()
+	}
+	if scanner != nil {
+		go func() { errCh <- scanner.Run(ctx) }()
 	}
 
 	for {

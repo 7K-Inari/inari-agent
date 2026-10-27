@@ -8,7 +8,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 
+	"github.com/7K-Inari/inari-agent/internal/addonscan"
 	"github.com/7K-Inari/inari-agent/internal/argocd"
 	"github.com/7K-Inari/inari-agent/internal/command"
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
@@ -140,4 +142,11 @@ func (c *GitOpsConfig) streamer(log logr.Logger, dyn dynamic.Interface, sender s
 		ns = "argocd"
 	}
 	return status.NewStreamer(log.WithName("status"), dyn, sender, ns, c.InstanceGVRs)
+}
+
+// addonScanner builds the addon discovery scanner (Feature C, plan §6):
+// helm releases matched against the known-addon table are reported to
+// the control plane as adoptable addons.
+func (c *GitOpsConfig) addonScanner(meta metadata.Interface, sender addonscan.Sender) *addonscan.Scanner {
+	return addonscan.NewScanner(meta, sender, addonscan.DefaultKnownAddons)
 }
