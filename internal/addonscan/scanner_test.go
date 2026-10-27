@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/structpb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/metadata"
 	metadatafake "k8s.io/client-go/metadata/fake"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 )
