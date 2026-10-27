@@ -58,6 +58,17 @@ func TestGitOpsConfigureRegistersHandlers(t *testing.T) {
 	}
 }
 
+func TestAddonScannerGuards(t *testing.T) {
+	// No scan namespaces configured → nil (nothing RBAC allows reading).
+	if s := (&GitOpsConfig{}).addonScanner(nil, nil); s != nil {
+		t.Error("want nil without namespaces")
+	}
+	// Nil metadata client → nil (defensive; production always wires Meta).
+	if s := (&GitOpsConfig{AddonScanNamespaces: []string{"inari-system"}}).addonScanner(nil, nil); s != nil {
+		t.Error("want nil without metadata client")
+	}
+}
+
 func TestGitOpsStateRepoDefault(t *testing.T) {
 	cfg := &GitOpsConfig{StateRepoOrg: "7K-Inari"}
 	if got := cfg.stateRepo("acme"); got != "7K-Inari/acme-inari-state" {

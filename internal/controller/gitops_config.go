@@ -57,6 +57,11 @@ type GitOpsConfig struct {
 	// InstanceGVRs are KRO instance GVRs the status streamer watches.
 	InstanceGVRs []schema.GroupVersionResource
 
+	// AddonScanNamespaces scopes the addon scanner's helm-secret watches
+	// (least privilege: the agent has no cluster-wide secrets grant, see
+	// config/rbac). Empty disables the scanner.
+	AddonScanNamespaces []string
+
 	// JournalNamespace hosts the command journal ConfigMap (agent
 	// namespace); empty disables durable idempotency.
 	JournalNamespace string
@@ -146,7 +151,11 @@ func (c *GitOpsConfig) streamer(log logr.Logger, dyn dynamic.Interface, sender s
 
 // addonScanner builds the addon discovery scanner (Feature C, plan §6):
 // helm releases matched against the known-addon table are reported to
-// the control plane as adoptable addons.
+// the control plane as adoptable addons. Nil when no scan namespaces are
+// configured (the scanner would have nothing it is allowed to read).
 func (c *GitOpsConfig) addonScanner(meta metadata.Interface, sender addonscan.Sender) *addonscan.Scanner {
-	return addonscan.NewScanner(meta, sender, addonscan.DefaultKnownAddons)
+	if meta == nil || len(c.AddonScanNamespaces) == 0 {
+		return nil
+	}
+	return addonscan.NewScanner(meta, sender, addonscan.DefaultKnownAddons, c.AddonScanNamespaces)
 }

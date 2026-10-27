@@ -1,0 +1,14 @@
+suite: gitops ClusterRole
+templates:
+  - clusterrole.yaml
+tests:
+  - it: grants ArgoCD applications AND applicationsets (Feature C fleet addons)
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["argoproj.io"]
+            resources: ["applications", "applicationsets"]
+            verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

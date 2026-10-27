@@ -117,7 +117,7 @@ func TestLiveAddonAdoption(t *testing.T) {
 
 	// Scanner discovers the live release.
 	sink := newReportSink()
-	scanner := addonscan.NewScanner(meta, sink, addonscan.DefaultKnownAddons)
+	scanner := addonscan.NewScanner(meta, sink, addonscan.DefaultKnownAddons, []string{"cert-manager"})
 	go func() { _ = scanner.Run(ctx) }()
 	waitFor(t, 60*time.Second, "scanner discovers cert-manager", func() bool {
 		for _, ev := range sink.events() {

@@ -93,6 +93,10 @@
         "controlPlane": { "type": "string" },
         "clusterLabels": { "type": "string" },
         "helmNamespaces": { "type": "string" },
+        "addonScanNamespaces": {
+          "type": "string",
+          "description": "Namespaces the addon scanner (Feature C) watches for adoptable helm releases; empty falls back to helmNamespaces."
+        },
         "readyzDisconnectGrace": {
           "type": "string",
           "description": "Go duration (e.g. 45s); empty uses the built-in 90s default."

@@ -38,7 +38,8 @@ rules:
   # ArgoCD Applications: status streamer (app health/sync reporting),
   # invoke-action ownership checks (inari.dev/managed-by label), and
   # register-argocd-app command handling (create/update/delete of
-  # Inari-managed Applications).
+  # Inari-managed Applications). ApplicationSets: fleet addon deployments
+  # (Feature C) — the agent upserts server-rendered manifests verbatim.
   - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
+    resources: ["applications", "applicationsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

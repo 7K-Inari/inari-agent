@@ -94,7 +94,7 @@ func lastReportItems(t *testing.T, ev *agentv1.Event) map[string]map[string]inte
 
 func runScanner(t *testing.T, meta metadata.Interface, sink *eventSink) context.CancelFunc {
 	t.Helper()
-	s := NewScanner(meta, sink, DefaultKnownAddons)
+	s := NewScanner(meta, sink, DefaultKnownAddons, []string{"cert-manager", "eso", "kube-system"})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
@@ -168,7 +168,7 @@ func TestScannerIgnoresNonDeployedRevisions(t *testing.T) {
 func TestScannerRetriesAfterSendFailure(t *testing.T) {
 	sink := &flakySink{failFirst: true}
 	meta := fakeMeta(helmSecret("cert-manager", "cert-manager", "1", "deployed"))
-	s := NewScanner(meta, sink, DefaultKnownAddons)
+	s := NewScanner(meta, sink, DefaultKnownAddons, []string{"cert-manager", "eso", "kube-system"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = s.Run(ctx) }()
@@ -216,10 +216,52 @@ func waitFor(t *testing.T, d time.Duration, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// Least-privilege (config/rbac): the agent has no cluster-wide secrets
+// grant, so the scanner must watch ONLY the configured namespaces.
+// Releases elsewhere are invisible — never reported.
+func TestScannerWatchesOnlyConfiguredNamespaces(t *testing.T) {
+	sink := &eventSink{}
+	meta := fakeMeta(
+		helmSecret("cert-manager", "cert-manager", "1", "deployed"),
+		helmSecret("other-ns", "external-secrets", "1", "deployed"),
+	)
+	s := NewScanner(meta, sink, DefaultKnownAddons, []string{"cert-manager"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	ev := waitForReport(t, sink, 1)
+	items := lastReportItems(t, ev)
+	if _, ok := items["platform:cert-manager"]; !ok {
+		t.Errorf("watched-namespace release missing: %v", items)
+	}
+	if _, ok := items["platform:external-secrets"]; ok {
+		t.Errorf("release in unwatched namespace leaked into report: %v", items)
+	}
+}
+
+// With no namespaces configured the scanner is a no-op: no watch, no
+// report, clean shutdown.
+func TestScannerNoNamespacesIsNoop(t *testing.T) {
+	sink := &eventSink{}
+	s := NewScanner(fakeMeta(helmSecret("cert-manager", "cert-manager", "1", "deployed")), sink, DefaultKnownAddons, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.reports()) != 0 {
+		t.Errorf("no-op scanner reported: %v", sink.reports())
+	}
+}
+
 func TestScannerDedupesAndResets(t *testing.T) {
 	sink := &eventSink{}
 	meta := fakeMeta(helmSecret("cert-manager", "cert-manager", "1", "deployed"))
-	s := NewScanner(meta, sink, DefaultKnownAddons)
+	s := NewScanner(meta, sink, DefaultKnownAddons, []string{"cert-manager", "eso", "kube-system"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = s.Run(ctx) }()

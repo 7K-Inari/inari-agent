@@ -15,9 +15,11 @@ metadata:
     app.kubernetes.io/name: inari-agent
     app.kubernetes.io/part-of: inari
 rules:
-  # ArgoCD Applications/AppProjects: register + status stream.
+  # ArgoCD Applications/AppProjects/ApplicationSets: register + status
+  # stream. ApplicationSets carry fleet addon deployments (Feature C);
+  # the agent only ever upserts server-rendered manifests.
   - apiGroups: ["argoproj.io"]
-    resources: ["applications", "appprojects"]
+    resources: ["applications", "appprojects", "applicationsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   # Bundle-managed ArgoCD install (server-side apply of pinned manifests).
   - apiGroups: [""]

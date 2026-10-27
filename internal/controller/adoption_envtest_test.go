@@ -130,7 +130,7 @@ func TestAdoptionAgentSideEndToEnd(t *testing.T) {
 
 	// --- 1. Scanner: the pre-existing release is reported as adoptable.
 	sink := &reportSink{}
-	scanner := addonscan.NewScanner(meta, sink, addonscan.DefaultKnownAddons)
+	scanner := addonscan.NewScanner(meta, sink, addonscan.DefaultKnownAddons, []string{"cert-manager"})
 	go func() { _ = scanner.Run(ctx) }()
 
 	var report map[string]interface{}

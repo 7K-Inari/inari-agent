@@ -48,6 +48,11 @@ config:
   clusterLabels: ""
   # Namespaces whose Helm release Secrets are discovered (least privilege).
   helmNamespaces: "inari-system"
+  # Namespaces the addon scanner (Feature C) watches for adoptable helm
+  # releases. Empty = helmNamespaces. Namespaces beyond the agent's own
+  # need a secrets-reading Role granted out of band (least privilege —
+  # there is deliberately no cluster-wide secrets grant).
+  addonScanNamespaces: ""
   # Optional override for INARI_READYZ_DISCONNECT_GRACE (Go duration,
   # default 90s): how long /readyz tolerates a control-plane stream
   # disconnect before flapping unready. Empty uses the built-in default.

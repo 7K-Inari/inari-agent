@@ -73,19 +73,26 @@ type Sender interface {
 // Scanner watches helm release Secrets and reports known addons. Reports
 // are deduped by content; Run emits a full snapshot once its cache syncs,
 // and Reset forces a fresh snapshot after a stream reconnect.
+//
+// Least privilege (config/rbac): the agent has NO cluster-wide secrets
+// grant, so the scanner watches only the configured namespaces — the same
+// set RBAC grants via namespaced Roles (INARI_ADDON_SCAN_NAMESPACES,
+// defaulting to the INARI_HELM_NAMESPACES list).
 type Scanner struct {
-	meta   metadata.Interface
-	sender Sender
-	known  []KnownAddon
+	meta       metadata.Interface
+	sender     Sender
+	known      []KnownAddon
+	namespaces []string
 
 	mu      sync.Mutex
 	current map[string]map[string]interface{} // key: namespace/release
 	lastSum string
 }
 
-// NewScanner returns a Scanner reporting matches of known via sender.
-func NewScanner(meta metadata.Interface, sender Sender, known []KnownAddon) *Scanner {
-	return &Scanner{meta: meta, sender: sender, known: known, current: map[string]map[string]interface{}{}}
+// NewScanner returns a Scanner reporting matches of known via sender,
+// watching only namespaces.
+func NewScanner(meta metadata.Interface, sender Sender, known []KnownAddon, namespaces []string) *Scanner {
+	return &Scanner{meta: meta, sender: sender, known: known, namespaces: namespaces, current: map[string]map[string]interface{}{}}
 }
 
 // Reset clears the dedupe state and re-emits the current snapshot — used
@@ -98,21 +105,30 @@ func (s *Scanner) Reset(ctx context.Context) {
 	s.report(ctx)
 }
 
-// Run starts the watch and blocks until ctx is cancelled.
+// Run starts one namespaced watch per configured namespace and blocks
+// until ctx is cancelled. With no namespaces configured the scanner is a
+// no-op (nothing RBAC grants it to read).
 func (s *Scanner) Run(ctx context.Context) error {
-	tweak := func(opts *metav1.ListOptions) { opts.LabelSelector = "owner=helm" }
-	factory := metadatainformer.NewFilteredSharedInformerFactory(s.meta, 0, metav1.NamespaceAll, tweak)
-	informer := factory.ForResource(secretsGVR).Informer()
-
-	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj interface{}) { s.onEvent(ctx, obj) },
-		UpdateFunc: func(_, obj interface{}) { s.onEvent(ctx, obj) },
-		DeleteFunc: func(obj interface{}) { s.onDelete(ctx, obj) },
-	}); err != nil {
-		return fmt.Errorf("addonscan: register handler: %w", err)
+	if len(s.namespaces) == 0 {
+		<-ctx.Done()
+		return nil
 	}
-	factory.Start(ctx.Done())
-	if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced) {
+	tweak := func(opts *metav1.ListOptions) { opts.LabelSelector = "owner=helm" }
+	syncs := []cache.InformerSynced{}
+	for _, ns := range s.namespaces {
+		factory := metadatainformer.NewFilteredSharedInformerFactory(s.meta, 0, ns, tweak)
+		informer := factory.ForResource(secretsGVR).Informer()
+		if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    func(obj interface{}) { s.onEvent(ctx, obj) },
+			UpdateFunc: func(_, obj interface{}) { s.onEvent(ctx, obj) },
+			DeleteFunc: func(obj interface{}) { s.onDelete(ctx, obj) },
+		}); err != nil {
+			return fmt.Errorf("addonscan: register handler: %w", err)
+		}
+		factory.Start(ctx.Done())
+		syncs = append(syncs, informer.HasSynced)
+	}
+	if !cache.WaitForCacheSync(ctx.Done(), syncs...) {
 		if ctx.Err() != nil {
 			return nil
 		}
