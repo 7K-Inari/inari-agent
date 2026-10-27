@@ -29,19 +29,21 @@ type Journal interface {
 // are answered without re-execution (at-least-once delivery, plan §5.2).
 // Commands fail closed while the stream is disconnected (plan §5.3).
 type Dispatcher struct {
-	mu        sync.Mutex
-	seen      map[string]*agentv1.CommandAck
-	handlers  map[agentv1.EventType]KindHandler
-	journal   Journal
-	handled   atomic.Int64
-	connected atomic.Bool
+	mu             sync.Mutex
+	seen           map[string]*agentv1.CommandAck
+	handlers       map[agentv1.EventType]KindHandler
+	bridgeHandlers map[string]KindHandler
+	journal        Journal
+	handled        atomic.Int64
+	connected      atomic.Bool
 }
 
 // NewDispatcher returns a Dispatcher that starts in the connected state.
 func NewDispatcher() *Dispatcher {
 	d := &Dispatcher{
-		seen:     map[string]*agentv1.CommandAck{},
-		handlers: map[agentv1.EventType]KindHandler{},
+		seen:           map[string]*agentv1.CommandAck{},
+		handlers:       map[agentv1.EventType]KindHandler{},
+		bridgeHandlers: map[string]KindHandler{},
 	}
 	d.connected.Store(true)
 	return d
@@ -104,6 +106,9 @@ func (d *Dispatcher) HandleEvent(ctx context.Context, ev *agentv1.Event) (*agent
 	et := agentv1.EventTypeFromString(ev.Type)
 	d.mu.Lock()
 	handler, ok := d.handlers[et]
+	if !ok {
+		handler, ok = d.bridgeHandlers[ev.Type]
+	}
 	d.mu.Unlock()
 
 	var ack *agentv1.CommandAck
@@ -181,7 +186,9 @@ func commandIDOf(ev *agentv1.Event) (string, error) {
 		}
 		return requireID(m.CommandId)
 	default:
-		return "", fmt.Errorf("command: unknown event type %q", ev.Type)
+		// structpb bridge commands (Feature C) carry commandId in the
+		// payload until inari-api gains first-class messages.
+		return bridgeCommandID(ev)
 	}
 }
 
