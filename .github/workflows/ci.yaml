@@ -28,6 +28,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
+      - name: envtest assets (adoption e2e against a real apiserver)
+        run: |
+          ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path)
+          echo "KUBEBUILDER_ASSETS=$ASSETS" >> "$GITHUB_ENV"
       - run: go test ./... -coverprofile cover.out
       - run: hack/check-footprint_test.sh
 
