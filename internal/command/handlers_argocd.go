@@ -41,3 +41,43 @@ func RegisterArgoCDAppHandler(gate ArgoCDGate, newClient func(namespace string) 
 			fmt.Sprintf("application %s registered in namespace %s", m.Name, ns), nil
 	}
 }
+
+// RegisterArgoCDAppSetHandler registers fleet addon ApplicationSets from
+// server-rendered manifests (Feature C bridge command). The manifest is
+// upserted verbatim — the agent never composes ApplicationSets itself.
+func RegisterArgoCDAppSetHandler(gate ArgoCDGate, newClient func(namespace string) *argocd.Client) KindHandler {
+	return registerManifestHandler(gate, newClient, "applicationset",
+		func(ctx context.Context, c *argocd.Client, name, manifest string) error {
+			return c.EnsureApplicationSet(ctx, name, manifest)
+		})
+}
+
+// RegisterArgoCDAppManifestHandler registers single-cluster addon
+// Applications from server-rendered manifests (Feature C bridge command).
+// Verbatim upsert preserves multi-source helm apps and TakeOwnership
+// sync options that RegisterArgoCDApp fields cannot express.
+func RegisterArgoCDAppManifestHandler(gate ArgoCDGate, newClient func(namespace string) *argocd.Client) KindHandler {
+	return registerManifestHandler(gate, newClient, "application",
+		func(ctx context.Context, c *argocd.Client, name, manifest string) error {
+			return c.EnsureApplicationManifest(ctx, name, manifest)
+		})
+}
+
+func registerManifestHandler(gate ArgoCDGate, newClient func(namespace string) *argocd.Client, kind string,
+	apply func(context.Context, *argocd.Client, string, string) error) KindHandler {
+	return func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
+		_, name, _, manifest, err := DecodeBridgeManifest(ev.Payload)
+		if err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, err.Error(), nil
+		}
+		ns, err := gate.EnsureReady(ctx)
+		if err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, err.Error(), nil
+		}
+		if err := apply(ctx, newClient(ns), name, manifest); err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, err.Error(), nil
+		}
+		return agentv1.CommandResult_COMMAND_RESULT_APPLIED,
+			fmt.Sprintf("%s %s registered in namespace %s", kind, name, ns), nil
+	}
+}

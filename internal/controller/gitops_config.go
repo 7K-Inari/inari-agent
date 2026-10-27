@@ -107,6 +107,11 @@ func (c *GitOpsConfig) configure(ctx context.Context, handler command.Handler, t
 	d.Register(agentv1.EventType_EVENT_TYPE_REGISTER_ARGOCD_APP, command.RegisterArgoCDAppHandler(lifecycle, func(ns string) *argocd.Client {
 		return argocd.NewClient(c.Dyn, ns)
 	}))
+	// Feature C addon registrations: structpb bridge commands carrying the
+	// server-rendered manifest, upserted verbatim (bridge.go).
+	newArgoClient := func(ns string) *argocd.Client { return argocd.NewClient(c.Dyn, ns) }
+	d.RegisterBridge(command.RegisterArgoCDAppSetEventType, command.RegisterArgoCDAppSetHandler(lifecycle, newArgoClient))
+	d.RegisterBridge(command.RegisterArgoCDAppManifestEventType, command.RegisterArgoCDAppManifestHandler(lifecycle, newArgoClient))
 	if c.ArgoCDAPI != nil {
 		ns := c.ArgoCDNamespace
 		if ns == "" {

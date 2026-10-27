@@ -429,6 +429,48 @@ func TestStandaloneModeLeavesReadinessUnarmed(t *testing.T) {
 	}
 }
 
+// Bridge commands (Feature C addon registrations) arrive as structpb
+// payloads under event types the pinned proto enum does not know; the
+// reconciler must route them to the command handler, not drop-and-log.
+func TestDispatchRoutesBridgeCommands(t *testing.T) {
+	fc := &fakeStreamClient{events: make(chan *agentv1.Event, 8)}
+	r := &AgentReconciler{Log: logr.Discard()}
+	handler := command.NewDispatcher()
+	handler.RegisterBridge(command.RegisterArgoCDAppSetEventType,
+		func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
+			return agentv1.CommandResult_COMMAND_RESULT_APPLIED, "ok", nil
+		})
+
+	payload, err := structpb.NewStruct(map[string]interface{}{
+		"commandId": "inari-addonset-01J",
+		"name":      "inari-addonset-01J",
+		"namespace": "argocd",
+		"manifest":  "apiVersion: argoproj.io/v1alpha1\nkind: ApplicationSet\n",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	any, err := anypb.New(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := &agentv1.Event{EventId: "evt-appset", Type: command.RegisterArgoCDAppSetEventType, Payload: any}
+	r.dispatch(context.Background(), fc, nil, handler, ev)
+
+	waitFor(t, "bridge command acked", func() bool {
+		for _, ev := range fc.sentEvents() {
+			if agentv1.EventTypeFromString(ev.Type) == agentv1.EventType_EVENT_TYPE_COMMAND_ACK {
+				var ack agentv1.CommandAck
+				if err := ev.Payload.UnmarshalTo(&ack); err == nil &&
+					ack.CommandId == "inari-addonset-01J" && ack.Result == agentv1.CommandResult_COMMAND_RESULT_APPLIED {
+					return true
+				}
+			}
+		}
+		return false
+	})
+}
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

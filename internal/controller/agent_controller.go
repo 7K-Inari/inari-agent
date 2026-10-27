@@ -307,6 +307,12 @@ func (r *AgentReconciler) dispatch(
 		agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE:
 		r.handleCommand(ctx, client, handler, ev)
 	default:
+		// Feature C addon registrations arrive as structpb bridge commands
+		// under types the pinned enum does not know (bridge.go).
+		if command.IsBridgeCommandType(ev.Type) {
+			r.handleCommand(ctx, client, handler, ev)
+			return
+		}
 		// Compatibility contract: unknown event types are dropped-and-logged,
 		// never fatal (an N−1 gateway may send newer types).
 		r.Log.V(1).Info("dropping unknown event", "type", ev.Type, "eventId", ev.EventId)
