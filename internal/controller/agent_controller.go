@@ -187,7 +187,7 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 				prev(v)
 			}
 			if v {
-				scanner.Reset(context.Background())
+				scanner.Reset(ctx)
 			}
 		}
 	}

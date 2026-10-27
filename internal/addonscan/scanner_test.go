@@ -2,6 +2,7 @@ package addonscan
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -160,6 +161,59 @@ func TestScannerIgnoresNonDeployedRevisions(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// A failed send must NOT mark the snapshot as reported: the next informer
+// event retries it (status.Streamer contract).
+func TestScannerRetriesAfterSendFailure(t *testing.T) {
+	sink := &flakySink{failFirst: true}
+	meta := fakeMeta(helmSecret("cert-manager", "cert-manager", "1", "deployed"))
+	s := NewScanner(meta, sink, DefaultKnownAddons)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	// First attempt fails → nothing recorded; a Reset (or next event)
+	// re-emits and succeeds.
+	waitFor(t, 5*time.Second, "report retried after failure", func() bool {
+		return len(sink.events()) >= 1
+	})
+}
+
+type flakySink struct {
+	mu        sync.Mutex
+	failFirst bool
+	failed    bool
+	evts      []*agentv1.Event
+}
+
+func (f *flakySink) Send(_ context.Context, ev *agentv1.Event) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failFirst && !f.failed {
+		f.failed = true
+		return fmt.Errorf("transient send failure")
+	}
+	f.evts = append(f.evts, ev)
+	return nil
+}
+
+func (f *flakySink) events() []*agentv1.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*agentv1.Event{}, f.evts...)
+}
+
+func waitFor(t *testing.T, d time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
 }
 
 func TestScannerDedupesAndResets(t *testing.T) {

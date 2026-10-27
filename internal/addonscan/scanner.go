@@ -239,7 +239,6 @@ func (s *Scanner) report(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	s.lastSum = sum
 	s.mu.Unlock()
 
 	items := make([]interface{}, 0, len(addons))
@@ -254,12 +253,20 @@ func (s *Scanner) report(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	_ = s.sender.Send(ctx, &agentv1.Event{
+	// The dedupe entry is updated only after a successful send so a
+	// transient failure is retried on the next informer event (same
+	// contract as status.Streamer).
+	if err := s.sender.Send(ctx, &agentv1.Event{
 		EventId: "addonscan-" + uuid.NewString(),
 		Type:    ReportAddonsEventType,
 		Payload: payload,
 		Time:    timestamppb.Now(),
-	})
+	}); err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.lastSum = sum
+	s.mu.Unlock()
 }
 
 func checksumOf(addons []map[string]interface{}) string {

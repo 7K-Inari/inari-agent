@@ -116,7 +116,7 @@ func TestLiveAddonAdoption(t *testing.T) {
 	}
 
 	// Scanner discovers the live release.
-	sink := &reportSink{}
+	sink := newReportSink()
 	scanner := addonscan.NewScanner(meta, sink, addonscan.DefaultKnownAddons)
 	go func() { _ = scanner.Run(ctx) }()
 	waitFor(t, 60*time.Second, "scanner discovers cert-manager", func() bool {
@@ -188,10 +188,14 @@ func TestLiveAddonAdoption(t *testing.T) {
 	}
 }
 
-// reportSink captures scanner emissions.
+// reportSink captures scanner emissions. The channel is created up front:
+// a lazy init here would race the scanner goroutine and drop reports sent
+// before the first events() call.
 type reportSink struct {
 	ch chan *agentv1.Event
 }
+
+func newReportSink() *reportSink { return &reportSink{ch: make(chan *agentv1.Event, 64)} }
 
 func (s *reportSink) Send(_ context.Context, ev *agentv1.Event) error {
 	select {
@@ -202,9 +206,6 @@ func (s *reportSink) Send(_ context.Context, ev *agentv1.Event) error {
 }
 
 func (s *reportSink) events() []*agentv1.Event {
-	if s.ch == nil {
-		s.ch = make(chan *agentv1.Event, 64)
-	}
 	out := []*agentv1.Event{}
 	for {
 		select {
