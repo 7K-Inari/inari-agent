@@ -14,7 +14,7 @@ import (
 const testAppSetManifest = `apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: inari-addonset-01J
+  name: inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1
 spec:
   goTemplate: false
   generators:
@@ -24,7 +24,7 @@ spec:
           - cluster: prod-2
   template:
     metadata:
-      name: inari-addon-01J-{{cluster}}
+      name: inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1-{{cluster}}
     spec:
       project: default
       source:
@@ -44,7 +44,7 @@ spec:
 const testAppManifest = `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: inari-addon-01J
+  name: inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1
 spec:
   project: default
   sources:
@@ -73,10 +73,10 @@ func TestEnsureApplicationSetUpsertsManifestVerbatim(t *testing.T) {
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	c := NewClient(dyn, "argocd")
 
-	if err := c.EnsureApplicationSet(ctx, "inari-addonset-01J", testAppSetManifest); err != nil {
+	if err := c.EnsureApplicationSet(ctx, "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", testAppSetManifest); err != nil {
 		t.Fatal(err)
 	}
-	obj, err := dyn.Resource(ApplicationSetGVR).Namespace("argocd").Get(ctx, "inari-addonset-01J", metav1.GetOptions{})
+	obj, err := dyn.Resource(ApplicationSetGVR).Namespace("argocd").Get(ctx, "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestEnsureApplicationSetUpsertsManifestVerbatim(t *testing.T) {
 		t.Error("prune must stay off for adopted addons")
 	}
 	// Idempotent: second call is a no-op (no update action).
-	if err := c.EnsureApplicationSet(ctx, "inari-addonset-01J", testAppSetManifest); err != nil {
+	if err := c.EnsureApplicationSet(ctx, "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", testAppSetManifest); err != nil {
 		t.Fatal(err)
 	}
 	for _, a := range dyn.Actions() {
@@ -112,14 +112,14 @@ func TestEnsureApplicationSetDriftUpdate(t *testing.T) {
 	ctx := context.Background()
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	c := NewClient(dyn, "argocd")
-	if err := c.EnsureApplicationSet(ctx, "inari-addonset-01J", testAppSetManifest); err != nil {
+	if err := c.EnsureApplicationSet(ctx, "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", testAppSetManifest); err != nil {
 		t.Fatal(err)
 	}
 	updated := strings.Replace(testAppSetManifest, "prod-2", "prod-3", 1)
-	if err := c.EnsureApplicationSet(ctx, "inari-addonset-01J", updated); err != nil {
+	if err := c.EnsureApplicationSet(ctx, "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", updated); err != nil {
 		t.Fatal(err)
 	}
-	obj, _ := dyn.Resource(ApplicationSetGVR).Namespace("argocd").Get(ctx, "inari-addonset-01J", metav1.GetOptions{})
+	obj, _ := dyn.Resource(ApplicationSetGVR).Namespace("argocd").Get(ctx, "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", metav1.GetOptions{})
 	raw, _ := obj.MarshalJSON()
 	if !strings.Contains(string(raw), "prod-3") {
 		t.Error("drifted spec was not updated")
@@ -136,7 +136,7 @@ func TestEnsureApplicationSetRefusesForeignObject(t *testing.T) {
 	}}
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), foreign)
 	c := NewClient(dyn, "argocd")
-	m := strings.Replace(testAppSetManifest, "inari-addonset-01J", "theirs", 1)
+	m := strings.Replace(testAppSetManifest, "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", "theirs", 1)
 	if err := c.EnsureApplicationSet(ctx, "theirs", m); err == nil || !strings.Contains(err.Error(), "observe-only") {
 		t.Fatalf("foreign ApplicationSet must be refused, got %v", err)
 	}
@@ -147,10 +147,10 @@ func TestEnsureApplicationManifestMultiSource(t *testing.T) {
 	dyn := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 	c := NewClient(dyn, "argocd")
 
-	if err := c.EnsureApplicationManifest(ctx, "inari-addon-01J", testAppManifest); err != nil {
+	if err := c.EnsureApplicationManifest(ctx, "inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1", testAppManifest); err != nil {
 		t.Fatal(err)
 	}
-	obj, err := dyn.Resource(ApplicationGVR).Namespace("argocd").Get(ctx, "inari-addon-01J", metav1.GetOptions{})
+	obj, err := dyn.Resource(ApplicationGVR).Namespace("argocd").Get(ctx, "inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

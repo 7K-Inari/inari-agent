@@ -442,8 +442,8 @@ func TestDispatchRoutesBridgeCommands(t *testing.T) {
 		})
 
 	payload, err := structpb.NewStruct(map[string]interface{}{
-		"commandId": "inari-addonset-01J",
-		"name":      "inari-addonset-01J",
+		"commandId": "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1",
+		"name":      "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1",
 		"namespace": "argocd",
 		"manifest":  "apiVersion: argoproj.io/v1alpha1\nkind: ApplicationSet\n",
 	})
@@ -462,7 +462,7 @@ func TestDispatchRoutesBridgeCommands(t *testing.T) {
 			if agentv1.EventTypeFromString(ev.Type) == agentv1.EventType_EVENT_TYPE_COMMAND_ACK {
 				var ack agentv1.CommandAck
 				if err := ev.Payload.UnmarshalTo(&ack); err == nil &&
-					ack.CommandId == "inari-addonset-01J" && ack.Result == agentv1.CommandResult_COMMAND_RESULT_APPLIED {
+					ack.CommandId == "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1" && ack.Result == agentv1.CommandResult_COMMAND_RESULT_APPLIED {
 					return true
 				}
 			}

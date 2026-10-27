@@ -37,8 +37,8 @@ func TestDispatcherRoutesBridgeCommands(t *testing.T) {
 	})
 
 	ev := commandEvent(t, "appset", bridgePayload(t, map[string]interface{}{
-		"commandId": "inari-addonset-01J",
-		"name":      "inari-addonset-01J",
+		"commandId": "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1",
+		"name":      "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1",
 		"namespace": "argocd",
 		"manifest":  "apiVersion: argoproj.io/v1alpha1\nkind: ApplicationSet\n",
 	}), RegisterArgoCDAppSetEventType)
@@ -50,10 +50,10 @@ func TestDispatcherRoutesBridgeCommands(t *testing.T) {
 	if ack.Result != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
 		t.Fatalf("result = %v, want APPLIED", ack.Result)
 	}
-	if ack.CommandId != "inari-addonset-01J" {
+	if ack.CommandId != "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1" {
 		t.Errorf("ack command id = %q, want payload commandId", ack.CommandId)
 	}
-	if gotID != "inari-addonset-01J" || gotName != "inari-addonset-01J" || gotManifest == "" {
+	if gotID != "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1" || gotName != "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1" || gotManifest == "" {
 		t.Errorf("handler got id=%q name=%q manifest=%q", gotID, gotName, gotManifest)
 	}
 }
@@ -66,8 +66,8 @@ func TestDispatcherBridgeCommandsAreIdempotent(t *testing.T) {
 		return agentv1.CommandResult_COMMAND_RESULT_APPLIED, "ok", nil
 	})
 	ev := commandEvent(t, "appmanifest", bridgePayload(t, map[string]interface{}{
-		"commandId": "inari-addon-01J",
-		"name":      "inari-addon-01J",
+		"commandId": "inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1",
+		"name":      "inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1",
 		"namespace": "argocd",
 		"manifest":  "apiVersion: argoproj.io/v1alpha1\nkind: Application\n",
 	}), RegisterArgoCDAppManifestEventType)

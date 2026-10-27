@@ -18,7 +18,7 @@ import (
 const testBridgeAppSetManifest = `apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: inari-addonset-01J
+  name: inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1
 spec:
   goTemplate: false
   generators:
@@ -27,7 +27,7 @@ spec:
           - cluster: prod-1
   template:
     metadata:
-      name: inari-addon-01J-{{cluster}}
+      name: inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1-{{cluster}}
     spec:
       project: default
       source:
@@ -47,7 +47,7 @@ spec:
 const testBridgeAppManifest = `apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: inari-addon-01J
+  name: inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1
 spec:
   project: default
   source:
@@ -83,7 +83,7 @@ func TestRegisterArgoCDAppSetHandler(t *testing.T) {
 	d := NewDispatcher()
 	d.RegisterBridge(RegisterArgoCDAppSetEventType, h)
 
-	ev := bridgeEvent(t, RegisterArgoCDAppSetEventType, "inari-addonset-01J", "inari-addonset-01J", testBridgeAppSetManifest)
+	ev := bridgeEvent(t, RegisterArgoCDAppSetEventType, "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", testBridgeAppSetManifest)
 	ack, err := d.HandleEvent(context.Background(), ev)
 	if err != nil {
 		t.Fatal(err)
@@ -91,10 +91,10 @@ func TestRegisterArgoCDAppSetHandler(t *testing.T) {
 	if ack.Result != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
 		t.Fatalf("ack %+v", ack)
 	}
-	if ack.CommandId != "inari-addonset-01J" {
+	if ack.CommandId != "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1" {
 		t.Errorf("ack command id = %q", ack.CommandId)
 	}
-	obj, err := dyn.Resource(argocd.ApplicationSetGVR).Namespace("argocd").Get(context.Background(), "inari-addonset-01J", metav1.GetOptions{})
+	obj, err := dyn.Resource(argocd.ApplicationSetGVR).Namespace("argocd").Get(context.Background(), "inari-addonset-01j5z8k2n4xqj4tvdmx7a3b2c1", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,14 +120,14 @@ func TestRegisterArgoCDAppManifestHandler(t *testing.T) {
 	d.RegisterBridge(RegisterArgoCDAppManifestEventType, h)
 
 	ack, err := d.HandleEvent(context.Background(),
-		bridgeEvent(t, RegisterArgoCDAppManifestEventType, "inari-addon-01J", "inari-addon-01J", testBridgeAppManifest))
+		bridgeEvent(t, RegisterArgoCDAppManifestEventType, "inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1", "inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1", testBridgeAppManifest))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ack.Result != agentv1.CommandResult_COMMAND_RESULT_APPLIED {
 		t.Fatalf("ack %+v", ack)
 	}
-	obj, err := dyn.Resource(argocd.ApplicationGVR).Namespace("argocd").Get(context.Background(), "inari-addon-01J", metav1.GetOptions{})
+	obj, err := dyn.Resource(argocd.ApplicationGVR).Namespace("argocd").Get(context.Background(), "inari-addon-01j5z8k2n4xqj4tvdmx7a3b2c1", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
