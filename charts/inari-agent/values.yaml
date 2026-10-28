@@ -62,7 +62,8 @@ config:
   # defaults (legacy platform.inari.io CRDs + cert-manager ClusterIssuers +
   # external-dns DNSEndpoints + argoproj AppProjects/ApplicationSets).
   # Use this to watch the KRO tenantnamespace instance GVR once the RGD's
-  # generated group/kind is known. Empty uses the defaults.
+  # generated group/kind is known. Selectors are single-label (the comma
+  # is the entry separator). Empty uses the defaults.
   statusWatches: ""
 
 # OIDC client secret delivery (plan §5.3): when enabled, renders an

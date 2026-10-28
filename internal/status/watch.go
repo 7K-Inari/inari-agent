@@ -65,10 +65,15 @@ func ParseWatchResources(in string) ([]WatchResource, error) {
 		if entry == "" {
 			continue
 		}
-		gvrPart, selector, _ := strings.Cut(entry, "@")
+		gvrPart, selector, hasSelector := strings.Cut(entry, "@")
 		parts := strings.Split(gvrPart, "/")
 		if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
 			return nil, fmt.Errorf("status watch %q: want group/version/resource[@selector]", entry)
+		}
+		// A trailing "@" with an empty selector is a typo: silently
+		// watching everything is worse than failing boot.
+		if hasSelector && selector == "" {
+			return nil, fmt.Errorf("status watch %q: empty label selector after '@'", entry)
 		}
 		if selector != "" {
 			if _, err := metav1.ParseToLabelSelector(selector); err != nil {

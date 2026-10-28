@@ -20,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -136,6 +137,17 @@ func TestStreamerConfiguredWatchesEnvtest(t *testing.T) {
 		dnsEndpoint("foreign-zone", nil), metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	// A statusless AppProject: existence signal with UNKNOWN health.
+	appProjectGVR := schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "appprojects"}
+	project := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "argoproj.io/v1alpha1",
+		"kind":       "AppProject",
+		"metadata":   map[string]interface{}{"name": "team-a", "namespace": "argocd"},
+		"spec":       map[string]interface{}{"sourceRepos": []interface{}{"*"}},
+	}}
+	if _, err := dyn.Resource(appProjectGVR).Namespace("argocd").Create(ctx, project, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Watch config: native replacements with a DNSEndpoint label selector,
 	// plus the legacy platform watches whose CRDs are NOT installed here —
@@ -143,6 +155,7 @@ func TestStreamerConfiguredWatchesEnvtest(t *testing.T) {
 	watches := []WatchResource{
 		{GVR: clusterIssuerGVR},
 		{GVR: dnsEndpointGVR, LabelSelector: "inari.io/managed-by=inari"},
+		{GVR: appProjectGVR},
 	}
 	watches = append(watches, legacyPlatformWatches()...)
 
@@ -172,10 +185,10 @@ func TestStreamerConfiguredWatchesEnvtest(t *testing.T) {
 		return out
 	}
 
-	// Exactly two resources are watched: the ClusterIssuer and the labeled
-	// DNSEndpoint. The unlabeled DNSEndpoint and the absent platform CRDs
-	// must not produce events.
-	events := collect(2, 15*time.Second)
+	// Exactly three resources are watched: the ClusterIssuer, the labeled
+	// DNSEndpoint, and the AppProject. The unlabeled DNSEndpoint and the
+	// absent platform CRDs must not produce events.
+	events := collect(3, 15*time.Second)
 	byKind := map[string]*agentv1.StatusUpdate{}
 	for _, upd := range events {
 		byKind[upd.Resource.Kind+"/"+upd.Resource.Name] = upd
@@ -194,12 +207,19 @@ func TestStreamerConfiguredWatchesEnvtest(t *testing.T) {
 	if _, ok := byKind["DNSEndpoint.externaldns.k8s.io/foreign-zone"]; ok {
 		t.Fatal("label selector must exclude the unlabeled DNSEndpoint")
 	}
+	proj := byKind["AppProject.argoproj.io/team-a"]
+	if proj == nil {
+		t.Fatalf("no AppProject update; got %v", keys(byKind))
+	}
+	if proj.Health != agentv1.HealthStatus_HEALTH_STATUS_UNKNOWN {
+		t.Fatalf("statusless AppProject must report UNKNOWN, got %v", proj.Health)
+	}
 
 	// Delete the issuer: a MISSING update with the qualified kind streams.
 	if err := dyn.Resource(clusterIssuerGVR).Delete(ctx, "letsencrypt-prod", metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	events = collect(3, 15*time.Second)
+	events = collect(4, 15*time.Second)
 	last := events[len(events)-1]
 	if last.Resource.Kind != "ClusterIssuer.cert-manager.io" ||
 		last.Health != agentv1.HealthStatus_HEALTH_STATUS_MISSING {

@@ -71,6 +71,11 @@ func TestParseWatchResources(t *testing.T) {
 			in:      "cert-manager.io/v1/clusterissuers@not a selector!",
 			wantErr: true,
 		},
+		{
+			name:    "trailing @ with empty selector is a typo, not watch-everything",
+			in:      "cert-manager.io/v1/clusterissuers@",
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

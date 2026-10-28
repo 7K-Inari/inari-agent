@@ -481,3 +481,34 @@ func TestDuplicateGVRAcrossInstanceGVRsAndWatches(t *testing.T) {
 		t.Fatalf("InstanceGVRs entry wins with bare kind, got %q", upd.Resource.Kind)
 	}
 }
+
+func dnsEndpointObj(name, ns string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "externaldns.k8s.io/v1alpha1",
+		"kind":       "DNSEndpoint",
+		"metadata":   map[string]interface{}{"name": name, "namespace": ns, "uid": "uid-" + name},
+		"spec":       map[string]interface{}{"endpoints": []interface{}{}},
+	}}
+}
+
+// DNSEndpoint (and AppProject) carry no standard status conditions:
+// they must still stream an existence signal with UNKNOWN health so the
+// inventory sees the resource (and its later deletion), rather than
+// silently skipping it.
+func TestStatuslessNativeResourceEmitsUnknown(t *testing.T) {
+	sender := &captureSender{signal: make(chan struct{}, 8)}
+	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil,
+		[]WatchResource{{GVR: dnsEndpointGVR}})
+	s.emit(context.Background(), dnsEndpointObj("acme-zone", "tenant-acme"), true)
+	if sender.count() != 1 {
+		t.Fatalf("statusless resource must still emit existence, got %d events", sender.count())
+	}
+	upd := lastStatus(t, sender.at(0))
+	if upd.Resource.Kind != "DNSEndpoint.externaldns.k8s.io" {
+		t.Fatalf("kind %q", upd.Resource.Kind)
+	}
+	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_UNKNOWN ||
+		upd.Sync != agentv1.SyncState_SYNC_STATE_UNSPECIFIED {
+		t.Fatalf("update %+v", upd)
+	}
+}

@@ -66,3 +66,16 @@ func TestStatusWatchesFailsFastOnInvalid(t *testing.T) {
 		t.Fatal("invalid override must fail at boot, not silently watch nothing")
 	}
 }
+
+func TestStatusWatchesWhitespaceOnlyEnvUsesDefaults(t *testing.T) {
+	t.Setenv("INARI_STATUS_WATCHES", "   ")
+	got, err := statusWatches()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Whitespace parses to zero entries; the streamer layer treats nil as
+	// "apply built-in defaults" (GitOpsConfig.streamer).
+	if got != nil {
+		t.Fatalf("whitespace-only override must parse to nil (defaults downstream), got %+v", got)
+	}
+}
