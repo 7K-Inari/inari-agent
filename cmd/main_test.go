@@ -47,7 +47,7 @@ func TestStatusWatchesDefaultsWhenUnset(t *testing.T) {
 }
 
 func TestStatusWatchesParsesEnvOverride(t *testing.T) {
-	t.Setenv("INARI_STATUS_WATCHES", "cert-manager.io/v1/clusterissuers,kro.run/v1alpha1/tenantnamespaces@inari.io/org=acme")
+	t.Setenv("INARI_STATUS_WATCHES", "cert-manager.io/v1/clusterissuers;kro.run/v1alpha1/tenantnamespaces@inari.io/org=acme")
 	got, err := statusWatches()
 	if err != nil {
 		t.Fatal(err)

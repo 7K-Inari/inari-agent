@@ -28,10 +28,30 @@ func TestParseWatchResources(t *testing.T) {
 		},
 		{
 			name: "multiple entries with whitespace tolerated",
-			in:   "cert-manager.io/v1/clusterissuers, externaldns.k8s.io/v1alpha1/dnsendpoints",
+			in:   "cert-manager.io/v1/clusterissuers; externaldns.k8s.io/v1alpha1/dnsendpoints",
 			want: []WatchResource{
 				{GVR: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}},
 				{GVR: schema.GroupVersionResource{Group: "externaldns.k8s.io", Version: "v1alpha1", Resource: "dnsendpoints"}},
+			},
+		},
+		{
+			name: "multi-label selector (comma is selector syntax, not the entry separator)",
+			in:   "externaldns.k8s.io/v1alpha1/dnsendpoints@inari.io/managed-by=inari,inari.io/org=acme",
+			want: []WatchResource{
+				{
+					GVR:           schema.GroupVersionResource{Group: "externaldns.k8s.io", Version: "v1alpha1", Resource: "dnsendpoints"},
+					LabelSelector: "inari.io/managed-by=inari,inari.io/org=acme",
+				},
+			},
+		},
+		{
+			name: "set-based selector",
+			in:   "cert-manager.io/v1/clusterissuers@inari.io/org in (acme, globex)",
+			want: []WatchResource{
+				{
+					GVR:           schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"},
+					LabelSelector: "inari.io/org in (acme, globex)",
+				},
 			},
 		},
 		{
@@ -46,7 +66,7 @@ func TestParseWatchResources(t *testing.T) {
 		},
 		{
 			name: "duplicate entries deduped",
-			in:   "cert-manager.io/v1/clusterissuers,cert-manager.io/v1/clusterissuers",
+			in:   "cert-manager.io/v1/clusterissuers;cert-manager.io/v1/clusterissuers",
 			want: []WatchResource{
 				{GVR: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}},
 			},

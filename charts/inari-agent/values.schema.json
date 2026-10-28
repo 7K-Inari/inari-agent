@@ -103,7 +103,7 @@
         },
         "statusWatches": {
           "type": "string",
-          "description": "Status streamer watch list override (INARI_STATUS_WATCHES): comma-separated group/version/resource[@label-selector] entries; empty uses the built-in defaults."
+          "description": "Status streamer watch list override (INARI_STATUS_WATCHES): semicolon-separated group/version/resource[@label-selector] entries; empty uses the built-in defaults."
         }
       },
       "required": ["registrationToken", "tenantID", "controlPlane", "clusterLabels", "helmNamespaces"],

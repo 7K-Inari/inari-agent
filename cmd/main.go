@@ -236,8 +236,10 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 //	                         in-cluster service URL)
 //	INARI_ARGOCD_API_TOKEN   bearer token for invoke-action (optional)
 //	INARI_STATUS_WATCHES     status streamer watch list override:
-//	                         comma-separated group/version/resource
-//	                         [@label-selector] entries; replaces the
+//	                         semicolon-separated group/version/resource
+//	                         [@label-selector] entries (selectors keep
+//	                         full metav1 syntax, commas included);
+//	                         replaces the
 //	                         built-in defaults when set. This is how the
 //	                         KRO tenantnamespace instance GVR (generated
 //	                         from the RGD's spec.schema) gets watched.

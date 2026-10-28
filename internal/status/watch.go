@@ -48,8 +48,10 @@ func DefaultWatchResources() []WatchResource {
 }
 
 // ParseWatchResources parses the INARI_STATUS_WATCHES value: a
-// comma-separated list of "group/version/resource[@selector]" entries.
-// An empty input yields no entries (the caller then applies
+// semicolon-separated list of "group/version/resource[@selector]"
+// entries. The entry separator is ";" so selectors keep the full metav1
+// label-selector syntax — commas, set-based "in (...)", etc. An empty
+// input yields no entries (the caller then applies
 // DefaultWatchResources). Label selectors are validated with
 // metav1.ParseToLabelSelector so a typo fails fast at boot instead of
 // silently watching everything.
@@ -60,7 +62,7 @@ func ParseWatchResources(in string) ([]WatchResource, error) {
 	}
 	seen := map[WatchResource]bool{}
 	var out []WatchResource
-	for _, entry := range strings.Split(in, ",") {
+	for _, entry := range strings.Split(in, ";") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
