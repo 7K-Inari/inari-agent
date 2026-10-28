@@ -146,7 +146,7 @@ func TestStreamerConfiguredWatchesEnvtest(t *testing.T) {
 	}
 	watches = append(watches, legacyPlatformWatches()...)
 
-	sender := &captureSender{mu: make(chan struct{}, 16)}
+	sender := &captureSender{signal: make(chan struct{}, 16)}
 	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, watches)
 	s.Discovery = kube.Discovery()
 	sctx, cancel := context.WithCancel(ctx)
@@ -157,15 +157,16 @@ func TestStreamerConfiguredWatchesEnvtest(t *testing.T) {
 	collect := func(n int, d time.Duration) []*agentv1.StatusUpdate {
 		t.Helper()
 		deadline := time.After(d)
-		for len(sender.events) < n {
+		for sender.count() < n {
 			select {
-			case <-sender.mu:
+			case <-sender.signal:
 			case <-deadline:
-				t.Fatalf("want %d events, got %d", n, len(sender.events))
+				t.Fatalf("want %d events, got %d", n, sender.count())
 			}
 		}
-		out := make([]*agentv1.StatusUpdate, len(sender.events))
-		for i, ev := range sender.events {
+		evs := sender.snapshot()
+		out := make([]*agentv1.StatusUpdate, len(evs))
+		for i, ev := range evs {
 			out[i] = lastStatus(t, ev)
 		}
 		return out

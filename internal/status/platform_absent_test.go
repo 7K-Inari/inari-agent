@@ -53,7 +53,7 @@ func TestAbsentPlatformCRDsDoNotBlockApplicationEmission(t *testing.T) {
 		}
 		return false, nil, nil
 	})
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, legacyPlatformWatches())
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -61,11 +61,11 @@ func TestAbsentPlatformCRDsDoNotBlockApplicationEmission(t *testing.T) {
 	go func() { _ = s.Run(ctx) }()
 
 	select {
-	case <-sender.mu:
+	case <-sender.signal:
 	case <-time.After(5 * time.Second):
 		t.Fatal("no Application status emitted when platform CRDs are absent")
 	}
-	upd := lastStatus(t, sender.events[0])
+	upd := lastStatus(t, sender.at(0))
 	if upd.Resource.Kind != "Application" || upd.Health != agentv1.HealthStatus_HEALTH_STATUS_HEALTHY {
 		t.Fatalf("unexpected update %+v", upd)
 	}
@@ -91,7 +91,7 @@ func TestDiscoveryFilterSkipsAbsentWatches(t *testing.T) {
 			APIResources: []metav1.APIResource{{Name: "applications"}},
 		},
 	}}}
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, legacyPlatformWatches())
 	s.Discovery = disc
 
@@ -100,7 +100,7 @@ func TestDiscoveryFilterSkipsAbsentWatches(t *testing.T) {
 	go func() { _ = s.Run(ctx) }()
 
 	select {
-	case <-sender.mu:
+	case <-sender.signal:
 	case <-time.After(5 * time.Second):
 		t.Fatal("no Application status emitted with discovery filtering")
 	}
@@ -123,16 +123,7 @@ func (d errDiscovery) ServerResourcesForGroupVersion(string) (*metav1.APIResourc
 // capability.FilterAvailable): the API may be served later, so the watch
 // is kept and its reflector retries on its own.
 func TestDiscoveryFilterFailsOpenOnError(t *testing.T) {
-	dyn := absentCRDFake()
-	var platformLists atomic.Int32
-	dyn.PrependReactor("list", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		if action.GetResource().Group == PlatformGroup {
-			platformLists.Add(1)
-			return true, nil, apierrors.NewNotFound(action.GetResource().GroupResource(), "")
-		}
-		return false, nil, nil
-	})
-	s := NewStreamer(logr.Discard(), dyn, &captureSender{}, "argocd", nil, legacyPlatformWatches())
+	s := NewStreamer(logr.Discard(), absentCRDFake(), &captureSender{}, "argocd", nil, legacyPlatformWatches())
 	s.Discovery = errDiscovery{err: apierrors.NewServiceUnavailable("apiserver restarting")}
 
 	if got := s.filteredWatches(); len(got) != len(PlatformGVRs) {

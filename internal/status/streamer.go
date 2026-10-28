@@ -101,11 +101,20 @@ func (s *Streamer) Run(ctx context.Context) error {
 
 	clusterFactory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(s.Dyn, 0, metav1.NamespaceAll, s.TweakListOptions)
 	factories = append(factories, clusterFactory)
+	instanceGVRs := map[schema.GroupVersionResource]bool{}
 	for _, gvr := range s.InstanceGVRs {
+		instanceGVRs[gvr] = true
 		inf := clusterFactory.ForResource(gvr).Informer()
 		stops = append(stops, qualifiedInformer{inf, false})
 	}
 	for _, w := range s.filteredWatches() {
+		// A GVR already watched via InstanceGVRs shares this factory's
+		// informer: a second handler would emit the same object twice
+		// with conflicting kinds (bare and group-qualified).
+		if instanceGVRs[w.GVR] {
+			s.Log.Info("status watch already covered by InstanceGVRs, skipping duplicate", "gvr", w.GVR.String())
+			continue
+		}
 		// Entries with a label selector need their own factory: the
 		// shared clusterFactory's TweakListOptions is global, not
 		// per-GVR. Selector-less entries share the cluster factory.
@@ -162,14 +171,16 @@ func (s *Streamer) filteredWatches() []WatchResource {
 	if s.Discovery == nil {
 		return s.Watches
 	}
-	checked := map[string]bool{}
+	// Cache per GVR, not per group/version: a group/version may be
+	// served while an individual resource in it is not (partial CRD
+	// install). Startup discovery calls stay bounded by the watch count.
+	checked := map[schema.GroupVersionResource]bool{}
 	out := make([]WatchResource, 0, len(s.Watches))
 	for _, w := range s.Watches {
-		gvKey := w.GVR.GroupVersion().String()
-		avail, known := checked[gvKey]
+		avail, known := checked[w.GVR]
 		if !known {
 			avail = capability.ResourceServed(s.Discovery, w.GVR)
-			checked[gvKey] = avail
+			checked[w.GVR] = avail
 		}
 		if !avail {
 			s.Log.Info("status watch skipped: API not installed on this cluster", "gvr", w.GVR.String())

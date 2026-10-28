@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,18 +20,43 @@ import (
 	"github.com/7K-Inari/inari-agent/internal/argocd"
 )
 
+// captureSender records sent events. Send is called from multiple
+// informer processor goroutines concurrently, so events is mutex-guarded;
+// signal notifies waiters non-blockingly.
 type captureSender struct {
-	mu     chan struct{}
+	signal chan struct{}
+
+	mu     sync.Mutex
 	events []*agentv1.Event
 }
 
 func (c *captureSender) Send(_ context.Context, ev *agentv1.Event) error {
+	c.mu.Lock()
 	c.events = append(c.events, ev)
+	c.mu.Unlock()
 	select {
-	case c.mu <- struct{}{}:
+	case c.signal <- struct{}{}:
 	default:
 	}
 	return nil
+}
+
+func (c *captureSender) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.events)
+}
+
+func (c *captureSender) at(i int) *agentv1.Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.events[i]
+}
+
+func (c *captureSender) snapshot() []*agentv1.Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]*agentv1.Event(nil), c.events...)
 }
 
 func app(name string, health, sync string) *unstructured.Unstructured {
@@ -111,16 +137,16 @@ func lastStatus(t *testing.T, ev *agentv1.Event) *agentv1.StatusUpdate {
 }
 
 func TestStreamerEmitsApplicationStatus(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	dyn := newDyn(app("my-web", "Healthy", "Synced"))
 	startStreamer(t, dyn, sender)
 
 	select {
-	case <-sender.mu:
+	case <-sender.signal:
 	case <-time.After(5 * time.Second):
 		t.Fatal("no status-update emitted")
 	}
-	upd := lastStatus(t, sender.events[0])
+	upd := lastStatus(t, sender.at(0))
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_HEALTHY || upd.Sync != agentv1.SyncState_SYNC_STATE_SYNCED {
 		t.Fatalf("update %+v", upd)
 	}
@@ -130,10 +156,10 @@ func TestStreamerEmitsApplicationStatus(t *testing.T) {
 }
 
 func TestStreamerDedupesAndEmitsOnChange(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	dyn := newDyn(app("my-web", "Healthy", "Synced"))
 	startStreamer(t, dyn, sender)
-	<-sender.mu
+	<-sender.signal
 
 	// Health change triggers a new event.
 	changed := app("my-web", "Degraded", "OutOfSync")
@@ -144,47 +170,47 @@ func TestStreamerDedupesAndEmitsOnChange(t *testing.T) {
 	deadline := time.After(5 * time.Second)
 	for {
 		select {
-		case <-sender.mu:
-			last := lastStatus(t, sender.events[len(sender.events)-1])
+		case <-sender.signal:
+			last := lastStatus(t, sender.at(sender.count()-1))
 			if last.Health == agentv1.HealthStatus_HEALTH_STATUS_DEGRADED {
-				if len(sender.events) != 2 {
-					t.Fatalf("expected exactly 2 events (dedupe), got %d", len(sender.events))
+				if sender.count() != 2 {
+					t.Fatalf("expected exactly 2 events (dedupe), got %d", sender.count())
 				}
 				return
 			}
 		case <-deadline:
-			t.Fatalf("no degraded event; events=%d", len(sender.events))
+			t.Fatalf("no degraded event; events=%d", sender.count())
 		}
 	}
 }
 
 func TestStreamerKROInstanceConditions(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	dyn := newDyn(kroInstance("my-web", "True"))
 	startStreamer(t, dyn, sender)
 
 	select {
-	case <-sender.mu:
+	case <-sender.signal:
 	case <-time.After(5 * time.Second):
 		t.Fatal("no event")
 	}
-	upd := lastStatus(t, sender.events[0])
+	upd := lastStatus(t, sender.at(0))
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_HEALTHY || upd.Sync != agentv1.SyncState_SYNC_STATE_SYNCED {
 		t.Fatalf("kro instance %+v", upd)
 	}
 }
 
 func TestStreamerPlatformFailedCondition(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	dyn := newDyn(keycloakRealm("acme", map[string]interface{}{"type": "Failed", "status": "True", "message": "realm error"}))
 	startStreamer(t, dyn, sender)
 
 	select {
-	case <-sender.mu:
+	case <-sender.signal:
 	case <-time.After(5 * time.Second):
 		t.Fatal("no event")
 	}
-	upd := lastStatus(t, sender.events[0])
+	upd := lastStatus(t, sender.at(0))
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_DEGRADED {
 		t.Fatalf("platform update %+v", upd)
 	}
@@ -200,16 +226,16 @@ func TestStreamerPlatformFailedCondition(t *testing.T) {
 }
 
 func TestEmitDeletePlatformKindSuffix(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil, nil)
 	obj := keycloakRealm("acme", map[string]interface{}{"type": "Ready", "status": "True"})
 
 	s.emit(context.Background(), obj, false)
 	s.emitDelete(context.Background(), obj, false)
-	if len(sender.events) != 2 {
-		t.Fatalf("expected create + delete events, got %d", len(sender.events))
+	if sender.count() != 2 {
+		t.Fatalf("expected create + delete events, got %d", sender.count())
 	}
-	upd := lastStatus(t, sender.events[1])
+	upd := lastStatus(t, sender.at(1))
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_MISSING {
 		t.Fatalf("delete update %+v", upd)
 	}
@@ -232,38 +258,38 @@ func (f *failOnceSender) Send(ctx context.Context, ev *agentv1.Event) error {
 }
 
 func TestEmitRetriesAfterSendFailure(t *testing.T) {
-	sender := &failOnceSender{inner: &captureSender{mu: make(chan struct{}, 8)}}
+	sender := &failOnceSender{inner: &captureSender{signal: make(chan struct{}, 8)}}
 	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil, nil)
 	obj := app("my-web", "Healthy", "Synced")
 
 	s.emit(context.Background(), obj, false)
-	if len(sender.inner.events) != 0 {
-		t.Fatalf("failed send must not be recorded as emitted, got %d events", len(sender.inner.events))
+	if sender.inner.count() != 0 {
+		t.Fatalf("failed send must not be recorded as emitted, got %d events", sender.inner.count())
 	}
 	s.emit(context.Background(), obj, false)
-	if len(sender.inner.events) != 1 {
-		t.Fatalf("expected retry to emit, got %d events", len(sender.inner.events))
+	if sender.inner.count() != 1 {
+		t.Fatalf("expected retry to emit, got %d events", sender.inner.count())
 	}
 }
 
 func TestEmitDeleteStreamsMissingAndPrunes(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil, nil)
 	obj := app("my-web", "Healthy", "Synced")
 
 	s.emit(context.Background(), obj, false)
 	s.emitDelete(context.Background(), obj, false)
-	if len(sender.events) != 2 {
-		t.Fatalf("expected create + delete events, got %d", len(sender.events))
+	if sender.count() != 2 {
+		t.Fatalf("expected create + delete events, got %d", sender.count())
 	}
-	upd := lastStatus(t, sender.events[1])
+	upd := lastStatus(t, sender.at(1))
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_MISSING {
 		t.Fatalf("delete update %+v", upd)
 	}
 	// Dedupe state pruned: re-adding the same content re-emits.
 	s.emit(context.Background(), obj, false)
-	if len(sender.events) != 3 {
-		t.Fatalf("expected re-add to re-emit, got %d events", len(sender.events))
+	if sender.count() != 3 {
+		t.Fatalf("expected re-add to re-emit, got %d events", sender.count())
 	}
 }
 
@@ -298,7 +324,7 @@ func TestComparisonErrorSurfacedInMessage(t *testing.T) {
 }
 
 func TestResetReEmitsSnapshot(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 16)}
+	sender := &captureSender{signal: make(chan struct{}, 16)}
 	dyn := newDyn(app("my-web", "Healthy", "Synced"))
 	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -313,11 +339,11 @@ func TestResetReEmitsSnapshot(t *testing.T) {
 	waitEvents := func(n int) {
 		t.Helper()
 		deadline := time.After(5 * time.Second)
-		for len(sender.events) < n {
+		for sender.count() < n {
 			select {
-			case <-sender.mu:
+			case <-sender.signal:
 			case <-deadline:
-				t.Fatalf("want %d events, got %d", n, len(sender.events))
+				t.Fatalf("want %d events, got %d", n, sender.count())
 			}
 		}
 	}
@@ -325,14 +351,14 @@ func TestResetReEmitsSnapshot(t *testing.T) {
 
 	// Content-unchanged re-emit is deduped...
 	s.emit(ctx, app("my-web", "Healthy", "Synced"), false)
-	if len(sender.events) != 1 {
-		t.Fatalf("dedupe broken: %d events", len(sender.events))
+	if sender.count() != 1 {
+		t.Fatalf("dedupe broken: %d events", sender.count())
 	}
 	// ...but after Reset (stream reconnect) the same object re-emits.
 	s.Reset()
 	s.emit(ctx, app("my-web", "Healthy", "Synced"), false)
-	if len(sender.events) != 2 {
-		t.Fatalf("no re-emit after Reset: %d events", len(sender.events))
+	if sender.count() != 2 {
+		t.Fatalf("no re-emit after Reset: %d events", sender.count())
 	}
 }
 
@@ -358,7 +384,7 @@ func clusterIssuer(name string, ready string, reason string) *unstructured.Unstr
 // group-qualified kind "<Kind>.<group>" (decision D-A) so the server can
 // route them; condition mapping reuses the generic Ready fallback.
 func TestStreamerNativeClusterIssuerQualifiedKind(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	dyn := newDyn(clusterIssuer("letsencrypt-prod", "True", ""))
 	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil,
 		[]WatchResource{{GVR: clusterIssuerGVR}})
@@ -368,11 +394,11 @@ func TestStreamerNativeClusterIssuerQualifiedKind(t *testing.T) {
 	t.Cleanup(func() { cancel(); <-errCh })
 
 	select {
-	case <-sender.mu:
+	case <-sender.signal:
 	case <-time.After(5 * time.Second):
 		t.Fatal("no event")
 	}
-	upd := lastStatus(t, sender.events[0])
+	upd := lastStatus(t, sender.at(0))
 	if upd.Resource.Kind != "ClusterIssuer.cert-manager.io" {
 		t.Fatalf("kind %q", upd.Resource.Kind)
 	}
@@ -393,17 +419,17 @@ func TestStreamerClusterIssuerNotReadyProgressing(t *testing.T) {
 
 // Delete events for watched native resources carry the qualified kind too.
 func TestEmitDeleteNativeQualifiedKind(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil,
 		[]WatchResource{{GVR: clusterIssuerGVR}})
 	obj := clusterIssuer("letsencrypt-prod", "True", "")
 
 	s.emit(context.Background(), obj, true)
 	s.emitDelete(context.Background(), obj, true)
-	if len(sender.events) != 2 {
-		t.Fatalf("expected create + delete events, got %d", len(sender.events))
+	if sender.count() != 2 {
+		t.Fatalf("expected create + delete events, got %d", sender.count())
 	}
-	upd := lastStatus(t, sender.events[1])
+	upd := lastStatus(t, sender.at(1))
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_MISSING {
 		t.Fatalf("delete update %+v", upd)
 	}
@@ -416,15 +442,42 @@ func TestEmitDeleteNativeQualifiedKind(t *testing.T) {
 // them unqualified today, and qualifying would break that contract
 // (risk #2).
 func TestKROInstanceBareKindPreserved(t *testing.T) {
-	sender := &captureSender{mu: make(chan struct{}, 8)}
+	sender := &captureSender{signal: make(chan struct{}, 8)}
 	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd",
 		[]schema.GroupVersionResource{webServiceGVR}, DefaultWatchResources())
 	s.emit(context.Background(), kroInstance("my-web", "True"), false)
-	if len(sender.events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(sender.events))
+	if sender.count() != 1 {
+		t.Fatalf("expected 1 event, got %d", sender.count())
 	}
-	upd := lastStatus(t, sender.events[0])
+	upd := lastStatus(t, sender.at(0))
 	if upd.Resource.Kind != "WebService" {
 		t.Fatalf("KRO instance kind must stay bare, got %q", upd.Resource.Kind)
+	}
+}
+
+// A GVR present in both InstanceGVRs and Watches must not double-register
+// a handler on the shared informer — that would emit the same object
+// twice with conflicting kinds (bare and group-qualified).
+func TestDuplicateGVRAcrossInstanceGVRsAndWatches(t *testing.T) {
+	sender := &captureSender{signal: make(chan struct{}, 8)}
+	dyn := newDyn(kroInstance("my-web", "True"))
+	s := NewStreamer(logr.Discard(), dyn, sender, "argocd",
+		[]schema.GroupVersionResource{webServiceGVR},
+		[]WatchResource{{GVR: webServiceGVR}})
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-errCh })
+
+	select {
+	case <-sender.signal:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no event")
+	}
+	if got := sender.count(); got != 1 {
+		t.Fatalf("duplicate GVR must emit exactly one event, got %d", got)
+	}
+	if upd := lastStatus(t, sender.at(0)); upd.Resource.Kind != "WebService" {
+		t.Fatalf("InstanceGVRs entry wins with bare kind, got %q", upd.Resource.Kind)
 	}
 }
