@@ -22,9 +22,17 @@ rules:
     resources: ["resourcegraphdefinitions"]
     verbs: ["get", "list", "watch"]
   # Platform-cluster CRDs reconciled by inari-operator (status streamer,
-  # M3/M7): read-only condition watch.
+  # M3/M7): read-only condition watch. Dual-run until the operator-sunset
+  # plan's Phase 4.
   - apiGroups: ["platform.inari.io"]
     resources: ["keycloakrealms", "keycloakclients", "dnszones", "dnsrecords", "tenantnamespaces"]
+    verbs: ["get", "list", "watch"]
+  # Native replacements for the operator facade CRDs (status streamer).
+  - apiGroups: ["cert-manager.io"]
+    resources: ["clusterissuers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["externaldns.k8s.io"]
+    resources: ["dnsendpoints"]
     verbs: ["get", "list", "watch"]
   # Helm releases: watched only in namespaces listed in
   # INARI_HELM_NAMESPACES (no cluster-wide secrets read — least privilege).
@@ -40,6 +48,11 @@ rules:
   # register-argocd-app command handling (create/update/delete of
   # Inari-managed Applications). ApplicationSets: fleet addon deployments
   # (Feature C) — the agent upserts server-rendered manifests verbatim.
+  # AppProjects are read-only here (status stream); mutations stay with
+  # the gitops ClusterRole in config/rbac.
   - apiGroups: ["argoproj.io"]
     resources: ["applications", "applicationsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["appprojects"]
+    verbs: ["get", "list", "watch"]

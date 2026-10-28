@@ -72,6 +72,10 @@ spec:
             - name: INARI_READYZ_DISCONNECT_GRACE
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.config.statusWatches }}
+            - name: INARI_STATUS_WATCHES
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

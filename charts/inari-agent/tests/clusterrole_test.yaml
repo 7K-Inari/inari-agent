@@ -12,3 +12,23 @@ tests:
             apiGroups: ["argoproj.io"]
             resources: ["applications", "applicationsets"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - it: grants read-only watches for the native platform replacements (status streamer)
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["cert-manager.io"]
+            resources: ["clusterissuers"]
+            verbs: ["get", "list", "watch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["externaldns.k8s.io"]
+            resources: ["dnsendpoints"]
+            verbs: ["get", "list", "watch"]
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["argoproj.io"]
+            resources: ["appprojects"]
+            verbs: ["get", "list", "watch"]

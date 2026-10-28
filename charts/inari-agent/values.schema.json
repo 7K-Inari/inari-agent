@@ -100,6 +100,10 @@
         "readyzDisconnectGrace": {
           "type": "string",
           "description": "Go duration (e.g. 45s); empty uses the built-in 90s default."
+        },
+        "statusWatches": {
+          "type": "string",
+          "description": "Status streamer watch list override (INARI_STATUS_WATCHES): comma-separated group/version/resource[@label-selector] entries; empty uses the built-in defaults."
         }
       },
       "required": ["registrationToken", "tenantID", "controlPlane", "clusterLabels", "helmNamespaces"],

@@ -57,6 +57,13 @@ config:
   # default 90s): how long /readyz tolerates a control-plane stream
   # disconnect before flapping unready. Empty uses the built-in default.
   readyzDisconnectGrace: ""
+  # Status streamer watch list override: comma-separated
+  # group/version/resource[@label-selector] entries, replacing the built-in
+  # defaults (legacy platform.inari.io CRDs + cert-manager ClusterIssuers +
+  # external-dns DNSEndpoints + argoproj AppProjects/ApplicationSets).
+  # Use this to watch the KRO tenantnamespace instance GVR once the RGD's
+  # generated group/kind is known. Empty uses the defaults.
+  statusWatches: ""
 
 # OIDC client secret delivery (plan §5.3): when enabled, renders an
 # ExternalSecret that projects the per-cluster OIDC client secret the control
