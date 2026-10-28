@@ -33,6 +33,7 @@ import (
 	"github.com/7K-Inari/inari-agent/internal/git"
 	"github.com/7K-Inari/inari-agent/internal/health"
 	"github.com/7K-Inari/inari-agent/internal/registration"
+	"github.com/7K-Inari/inari-agent/internal/status"
 	"github.com/7K-Inari/inari-agent/internal/stream"
 )
 
@@ -234,6 +235,12 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 //	INARI_ARGOCD_API_URL     ArgoCD API base for invoke-action (default
 //	                         in-cluster service URL)
 //	INARI_ARGOCD_API_TOKEN   bearer token for invoke-action (optional)
+//	INARI_STATUS_WATCHES     status streamer watch list override:
+//	                         comma-separated group/version/resource
+//	                         [@label-selector] entries; replaces the
+//	                         built-in defaults when set. This is how the
+//	                         KRO tenantnamespace instance GVR (generated
+//	                         from the RGD's spec.schema) gets watched.
 //
 // Without INARI_GIT_CREDS_SECRET the agent runs M1-only (commands stay
 // no-op), preserving standalone deployability.
@@ -266,6 +273,10 @@ func buildGitOps(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Int
 	if addonScanNS == "" {
 		addonScanNS = os.Getenv("INARI_HELM_NAMESPACES")
 	}
+	watches, err := statusWatches()
+	if err != nil {
+		return nil, err
+	}
 	cfg := &controller.GitOpsConfig{
 		Kube:                kube,
 		Dyn:                 dyn,
@@ -276,6 +287,7 @@ func buildGitOps(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Int
 		ArgoCDNamespace:     os.Getenv("INARI_ARGOCD_NAMESPACE"),
 		JournalNamespace:    credsNS,
 		AddonScanNamespaces: parseNamespaces(addonScanNS),
+		StatusWatches:       watches,
 	}
 	argocdNS := cfg.ArgoCDNamespace
 	if argocdNS == "" {
@@ -291,6 +303,23 @@ func buildGitOps(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Int
 		Timeout: 30 * time.Second,
 	}
 	return cfg, nil
+}
+
+// statusWatches resolves the status streamer watch list: the
+// INARI_STATUS_WATCHES override when set, otherwise the built-in defaults
+// (legacy platform.inari.io CRDs plus native replacements). Invalid
+// overrides fail boot loudly — silently watching nothing would blind the
+// Resources Inventory (operator-sunset plan risk #4).
+func statusWatches() ([]status.WatchResource, error) {
+	v := os.Getenv("INARI_STATUS_WATCHES")
+	if v == "" {
+		return status.DefaultWatchResources(), nil
+	}
+	watches, err := status.ParseWatchResources(v)
+	if err != nil {
+		return nil, fmt.Errorf("INARI_STATUS_WATCHES: %w", err)
+	}
+	return watches, nil
 }
 
 // defaultReadyzDisconnectGrace tolerates brief control-plane partitions
