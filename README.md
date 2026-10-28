@@ -25,6 +25,7 @@ Canonical architecture & development plan: [inari-docs/docs/architecture/inari-p
 | `INARI_CONTROL_PLANE` | Agent Gateway base URL, e.g. `https://gw.inari.example`. |
 | `INARI_CLUSTER_LABELS` | Comma-separated `k=v` labels reported at registration (ClusterSet targeting). |
 | `INARI_HELM_NAMESPACES` | Namespaces whose Helm release Secrets are discovered (default `inari-system`). Deliberately namespace-scoped: no cluster-wide Secrets read. |
+| `INARI_STATUS_WATCHES` | Status streamer watch-list override: comma-separated `group/version/resource[@label-selector]` entries. Empty uses the built-in defaults (legacy `platform.inari.io` CRDs + cert-manager `ClusterIssuers` + external-dns `DNSEndpoints` + argoproj `AppProjects`/`ApplicationSets`). Use it to watch the KRO `tenantnamespace` instance GVR once the RGD's generated group/kind is known. Invalid values fail boot. |
 
 ## Egress-only environments / HTTP proxy (plan §12.1/5)
 
