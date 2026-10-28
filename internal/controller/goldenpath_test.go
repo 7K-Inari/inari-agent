@@ -152,7 +152,7 @@ func TestGoldenPath(t *testing.T) {
 	}
 
 	sender := &goldenSender{events: make(chan *agentv1.Event, 4)}
-	streamer := status.NewStreamer(logr.Discard(), dyn, sender, "argocd", nil)
+	streamer := status.NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, nil)
 	sctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	errCh := make(chan error, 1)

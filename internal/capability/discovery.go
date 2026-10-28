@@ -30,7 +30,7 @@ func FilterAvailable(disc discovery.DiscoveryInterface, log logr.Logger, watcher
 		gvKey := gvr.GroupVersion().String()
 		avail, known := checked[gvKey]
 		if !known {
-			avail = resourceServed(disc, gvr)
+			avail = ResourceServed(disc, gvr)
 			checked[gvKey] = avail
 		}
 		if !avail {
@@ -43,9 +43,10 @@ func FilterAvailable(disc discovery.DiscoveryInterface, log logr.Logger, watcher
 	return out
 }
 
-// resourceServed reports whether the cluster serves the given resource,
-// using a single discovery call per group/version.
-func resourceServed(disc discovery.DiscoveryInterface, gvr schema.GroupVersionResource) bool {
+// ResourceServed reports whether the cluster serves the given resource.
+// Callers doing this for several GVRs should cache per group/version (one
+// discovery call covers the whole list).
+func ResourceServed(disc discovery.DiscoveryInterface, gvr schema.GroupVersionResource) bool {
 	rl, err := disc.ServerResourcesForGroupVersion(gvr.GroupVersion().String())
 	if err != nil {
 		if apierrors.IsNotFound(err) {

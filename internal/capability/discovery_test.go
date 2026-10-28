@@ -101,7 +101,7 @@ func TestFilterAvailableFailsOpenOnDiscoveryError(t *testing.T) {
 
 func TestResourceServedNotFound(t *testing.T) {
 	disc := discoveryWith()
-	if resourceServed(disc, csvGVR) {
+	if ResourceServed(disc, csvGVR) {
 		t.Error("absent group/version must report not served")
 	}
 	if !apierrors.IsNotFound(func() error {

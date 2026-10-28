@@ -73,17 +73,19 @@ func newDyn(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	listKinds := map[schema.GroupVersionResource]string{
 		argocd.ApplicationGVR: "ApplicationList",
 		webServiceGVR:         "WebServiceList",
+		clusterIssuerGVR:      "ClusterIssuerList",
+		dnsEndpointGVR:        "DNSEndpointList",
 	}
 	// The fake client only needs a unique registered list kind per GVR.
-	for _, gvr := range PlatformGVRs {
-		listKinds[gvr] = gvr.Resource + "List"
+	for _, w := range DefaultWatchResources() {
+		listKinds[w.GVR] = w.GVR.Resource + "List"
 	}
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
 }
 
 func startStreamer(t *testing.T, dyn *dynamicfake.FakeDynamicClient, sender *captureSender) context.CancelFunc {
 	t.Helper()
-	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", []schema.GroupVersionResource{webServiceGVR})
+	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", []schema.GroupVersionResource{webServiceGVR}, DefaultWatchResources())
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.Run(ctx) }()
@@ -199,11 +201,11 @@ func TestStreamerPlatformFailedCondition(t *testing.T) {
 
 func TestEmitDeletePlatformKindSuffix(t *testing.T) {
 	sender := &captureSender{mu: make(chan struct{}, 8)}
-	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil)
+	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil, nil)
 	obj := keycloakRealm("acme", map[string]interface{}{"type": "Ready", "status": "True"})
 
-	s.emit(context.Background(), obj)
-	s.emitDelete(context.Background(), obj)
+	s.emit(context.Background(), obj, false)
+	s.emitDelete(context.Background(), obj, false)
 	if len(sender.events) != 2 {
 		t.Fatalf("expected create + delete events, got %d", len(sender.events))
 	}
@@ -231,14 +233,14 @@ func (f *failOnceSender) Send(ctx context.Context, ev *agentv1.Event) error {
 
 func TestEmitRetriesAfterSendFailure(t *testing.T) {
 	sender := &failOnceSender{inner: &captureSender{mu: make(chan struct{}, 8)}}
-	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil)
+	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil, nil)
 	obj := app("my-web", "Healthy", "Synced")
 
-	s.emit(context.Background(), obj)
+	s.emit(context.Background(), obj, false)
 	if len(sender.inner.events) != 0 {
 		t.Fatalf("failed send must not be recorded as emitted, got %d events", len(sender.inner.events))
 	}
-	s.emit(context.Background(), obj)
+	s.emit(context.Background(), obj, false)
 	if len(sender.inner.events) != 1 {
 		t.Fatalf("expected retry to emit, got %d events", len(sender.inner.events))
 	}
@@ -246,11 +248,11 @@ func TestEmitRetriesAfterSendFailure(t *testing.T) {
 
 func TestEmitDeleteStreamsMissingAndPrunes(t *testing.T) {
 	sender := &captureSender{mu: make(chan struct{}, 8)}
-	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil)
+	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil, nil)
 	obj := app("my-web", "Healthy", "Synced")
 
-	s.emit(context.Background(), obj)
-	s.emitDelete(context.Background(), obj)
+	s.emit(context.Background(), obj, false)
+	s.emitDelete(context.Background(), obj, false)
 	if len(sender.events) != 2 {
 		t.Fatalf("expected create + delete events, got %d", len(sender.events))
 	}
@@ -259,7 +261,7 @@ func TestEmitDeleteStreamsMissingAndPrunes(t *testing.T) {
 		t.Fatalf("delete update %+v", upd)
 	}
 	// Dedupe state pruned: re-adding the same content re-emits.
-	s.emit(context.Background(), obj)
+	s.emit(context.Background(), obj, false)
 	if len(sender.events) != 3 {
 		t.Fatalf("expected re-add to re-emit, got %d events", len(sender.events))
 	}
@@ -278,7 +280,7 @@ func TestComparisonErrorSurfacedInMessage(t *testing.T) {
 	// .status.conditions, not health/sync: the message must carry them so the
 	// control plane shows why delivery is stuck.
 	upd, _ := mapStatus(appWithCondition("broken-app", "Healthy", "Unknown",
-		"ComparisonError", "failed to list refs: repository not found"))
+		"ComparisonError", "failed to list refs: repository not found"), "Application")
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_HEALTHY {
 		t.Fatalf("health = %v", upd.Health)
 	}
@@ -289,7 +291,7 @@ func TestComparisonErrorSurfacedInMessage(t *testing.T) {
 		t.Fatalf("message = %q", upd.Message)
 	}
 	// Clean apps: no condition noise.
-	upd2, _ := mapStatus(app("clean-app", "Healthy", "Synced"))
+	upd2, _ := mapStatus(app("clean-app", "Healthy", "Synced"), "Application")
 	if upd2.Message != "all good" {
 		t.Fatalf("message = %q", upd2.Message)
 	}
@@ -298,7 +300,7 @@ func TestComparisonErrorSurfacedInMessage(t *testing.T) {
 func TestResetReEmitsSnapshot(t *testing.T) {
 	sender := &captureSender{mu: make(chan struct{}, 16)}
 	dyn := newDyn(app("my-web", "Healthy", "Synced"))
-	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil)
+	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
@@ -322,16 +324,107 @@ func TestResetReEmitsSnapshot(t *testing.T) {
 	waitEvents(1) // initial snapshot
 
 	// Content-unchanged re-emit is deduped...
-	s.emit(ctx, app("my-web", "Healthy", "Synced"))
+	s.emit(ctx, app("my-web", "Healthy", "Synced"), false)
 	if len(sender.events) != 1 {
 		t.Fatalf("dedupe broken: %d events", len(sender.events))
 	}
 	// ...but after Reset (stream reconnect) the same object re-emits.
 	s.Reset()
-	s.emit(ctx, app("my-web", "Healthy", "Synced"))
+	s.emit(ctx, app("my-web", "Healthy", "Synced"), false)
 	if len(sender.events) != 2 {
 		t.Fatalf("no re-emit after Reset: %d events", len(sender.events))
 	}
 }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
+
+var clusterIssuerGVR = schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}
+var dnsEndpointGVR = schema.GroupVersionResource{Group: "externaldns.k8s.io", Version: "v1alpha1", Resource: "dnsendpoints"}
+
+func clusterIssuer(name string, ready string, reason string) *unstructured.Unstructured {
+	cond := map[string]interface{}{"type": "Ready", "status": ready}
+	if reason != "" {
+		cond["reason"] = reason
+	}
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "cert-manager.io/v1",
+		"kind":       "ClusterIssuer",
+		"metadata":   map[string]interface{}{"name": name, "uid": "uid-" + name},
+		"status":     map[string]interface{}{"conditions": []interface{}{cond}},
+	}}
+}
+
+// Native replacement resources from configured watches emit the
+// group-qualified kind "<Kind>.<group>" (decision D-A) so the server can
+// route them; condition mapping reuses the generic Ready fallback.
+func TestStreamerNativeClusterIssuerQualifiedKind(t *testing.T) {
+	sender := &captureSender{mu: make(chan struct{}, 8)}
+	dyn := newDyn(clusterIssuer("letsencrypt-prod", "True", ""))
+	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil,
+		[]WatchResource{{GVR: clusterIssuerGVR}})
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-errCh })
+
+	select {
+	case <-sender.mu:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no event")
+	}
+	upd := lastStatus(t, sender.events[0])
+	if upd.Resource.Kind != "ClusterIssuer.cert-manager.io" {
+		t.Fatalf("kind %q", upd.Resource.Kind)
+	}
+	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_HEALTHY || upd.Sync != agentv1.SyncState_SYNC_STATE_SYNCED {
+		t.Fatalf("update %+v", upd)
+	}
+	if upd.Resource.Name != "letsencrypt-prod" || upd.Resource.Namespace != "" {
+		t.Fatalf("ref %+v", upd.Resource)
+	}
+}
+
+func TestStreamerClusterIssuerNotReadyProgressing(t *testing.T) {
+	upd, _ := mapStatus(clusterIssuer("staging", "False", "ACMEAccountRegistrationFailed"), "ClusterIssuer.cert-manager.io")
+	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_PROGRESSING {
+		t.Fatalf("health = %v", upd.Health)
+	}
+}
+
+// Delete events for watched native resources carry the qualified kind too.
+func TestEmitDeleteNativeQualifiedKind(t *testing.T) {
+	sender := &captureSender{mu: make(chan struct{}, 8)}
+	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil,
+		[]WatchResource{{GVR: clusterIssuerGVR}})
+	obj := clusterIssuer("letsencrypt-prod", "True", "")
+
+	s.emit(context.Background(), obj, true)
+	s.emitDelete(context.Background(), obj, true)
+	if len(sender.events) != 2 {
+		t.Fatalf("expected create + delete events, got %d", len(sender.events))
+	}
+	upd := lastStatus(t, sender.events[1])
+	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_MISSING {
+		t.Fatalf("delete update %+v", upd)
+	}
+	if upd.Resource.Kind != "ClusterIssuer.cert-manager.io" {
+		t.Fatalf("delete kind %q", upd.Resource.Kind)
+	}
+}
+
+// KRO instance GVRs (InstanceGVRs) keep bare kinds: the server matches
+// them unqualified today, and qualifying would break that contract
+// (risk #2).
+func TestKROInstanceBareKindPreserved(t *testing.T) {
+	sender := &captureSender{mu: make(chan struct{}, 8)}
+	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd",
+		[]schema.GroupVersionResource{webServiceGVR}, DefaultWatchResources())
+	s.emit(context.Background(), kroInstance("my-web", "True"), false)
+	if len(sender.events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(sender.events))
+	}
+	upd := lastStatus(t, sender.events[0])
+	if upd.Resource.Kind != "WebService" {
+		t.Fatalf("KRO instance kind must stay bare, got %q", upd.Resource.Kind)
+	}
+}

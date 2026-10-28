@@ -18,9 +18,10 @@ import (
 // PlatformGroup is the API group of the inari-operator platform CRDs.
 const PlatformGroup = "platform.inari.io"
 
-// PlatformGVRs are the platform-cluster CRDs the status streamer watches.
-// Unlike KRO instance GVRs these are platform-fixed (not tenant-discovered),
-// so they are a package-level list rather than streamer configuration.
+// PlatformGVRs are the legacy platform-cluster CRDs (dual-run coverage
+// until Phase 4 of the operator-sunset plan removes them). They feed
+// DefaultWatchResources; the streamer watches whatever it is configured
+// with, not this list directly.
 var PlatformGVRs = []schema.GroupVersionResource{
 	{Group: PlatformGroup, Version: "v1alpha1", Resource: "keycloakrealms"},
 	{Group: PlatformGroup, Version: "v1alpha1", Resource: "keycloakclients"},
@@ -34,12 +35,6 @@ func isPlatformGroup(u *unstructured.Unstructured) bool {
 	return u.GroupVersionKind().Group == PlatformGroup
 }
 
-// platformKind is the ResourceRef kind the server routes on:
-// "<Kind>.platform.inari.io".
-func platformKind(u *unstructured.Unstructured) string {
-	return u.GetKind() + "." + PlatformGroup
-}
-
 // mapPlatformStatus converts a platform.inari.io object into a StatusUpdate
 // from its status conditions (api/v1alpha1/shared_types.go in
 // inari-operator): Ready=True → HEALTHY, Reconciling=True → PROGRESSING,
@@ -48,7 +43,9 @@ func platformKind(u *unstructured.Unstructured) string {
 // Ready > Reconciling > Failed guards against transient overlaps.
 func mapPlatformStatus(u *unstructured.Unstructured) (*agentv1.StatusUpdate, string) {
 	health, sync, msg := platformConditionOf(u)
-	kind := platformKind(u)
+	// Group-qualified kind ("<Kind>.platform.inari.io") — the server
+	// routes on the suffix; identical to the pre-generalization output.
+	kind := qualifiedKind(u)
 	key := fmt.Sprintf("%s/%s/%s/%s", kind, u.GetNamespace(), u.GetName(), u.GetUID())
 	return &agentv1.StatusUpdate{
 		Resource: &agentv1.ResourceRef{
