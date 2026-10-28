@@ -8,7 +8,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 
+	"github.com/7K-Inari/inari-agent/internal/addonscan"
 	"github.com/7K-Inari/inari-agent/internal/argocd"
 	"github.com/7K-Inari/inari-agent/internal/command"
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
@@ -27,9 +29,13 @@ type GitOpsConfig struct {
 
 	// Git writes to the tenant state repo (GitHub App auth via ESO).
 	Git git.Provider
+	// BoundStateRepo is the server-assigned baseline repo from registration
+	// ("owner/name"). It takes precedence over StateRepo and the convention.
+	BoundStateRepo string
 	// StateRepo overrides the default "<tenant>-inari-state" repo
 	// ("owner/name"); the tenant prefix is applied when empty and
-	// StateRepoOrg is set.
+	// StateRepoOrg is set. This is a manual override; the server binding
+	// (BoundStateRepo) takes precedence.
 	StateRepo    string
 	StateRepoOrg string
 
@@ -51,13 +57,22 @@ type GitOpsConfig struct {
 	// InstanceGVRs are KRO instance GVRs the status streamer watches.
 	InstanceGVRs []schema.GroupVersionResource
 
+	// AddonScanNamespaces scopes the addon scanner's helm-secret watches
+	// (least privilege: the agent has no cluster-wide secrets grant, see
+	// config/rbac). Empty disables the scanner.
+	AddonScanNamespaces []string
+
 	// JournalNamespace hosts the command journal ConfigMap (agent
 	// namespace); empty disables durable idempotency.
 	JournalNamespace string
 }
 
 // stateRepo resolves the platform-owned repo for the tenant.
+// Resolution order: explicit server binding > env override > convention.
 func (c *GitOpsConfig) stateRepo(tenantID string) string {
+	if c.BoundStateRepo != "" {
+		return c.BoundStateRepo
+	}
 	if c.StateRepo != "" {
 		return c.StateRepo
 	}
@@ -82,11 +97,12 @@ func (c *GitOpsConfig) configure(ctx context.Context, handler command.Handler, t
 	if rgds == nil {
 		rgds = render.DynamicRGDGetter{Dyn: c.Dyn}
 	}
-	deps := command.GitOpsDeps{Git: c.Git, DefaultStateRepo: c.stateRepo(tenantID)}
+	deps := &command.GitOpsDeps{Git: c.Git, DefaultStateRepo: c.stateRepo(tenantID)}
 	d.Register(agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE, command.RenderRGDInstanceHandler(deps, rgds))
 	d.Register(agentv1.EventType_EVENT_TYPE_APPLY_BUNDLE, command.ApplyBundleHandler(deps, bundles))
 	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_APPLY, command.SecretStoreApplyHandler(deps))
 	d.Register(agentv1.EventType_EVENT_TYPE_SECRET_STORE_DELETE, command.SecretStoreDeleteHandler(deps))
+	d.Register(agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE, command.GitopsConfigUpdateHandler(deps, c.Kube, c.JournalNamespace))
 
 	lifecycle := &argocd.Lifecycle{
 		Kube:      c.Kube,
@@ -98,6 +114,11 @@ func (c *GitOpsConfig) configure(ctx context.Context, handler command.Handler, t
 	d.Register(agentv1.EventType_EVENT_TYPE_REGISTER_ARGOCD_APP, command.RegisterArgoCDAppHandler(lifecycle, func(ns string) *argocd.Client {
 		return argocd.NewClient(c.Dyn, ns)
 	}))
+	// Feature C addon registrations: structpb bridge commands carrying the
+	// server-rendered manifest, upserted verbatim (bridge.go).
+	newArgoClient := func(ns string) *argocd.Client { return argocd.NewClient(c.Dyn, ns) }
+	d.RegisterBridge(command.RegisterArgoCDAppSetEventType, command.RegisterArgoCDAppSetHandler(lifecycle, newArgoClient))
+	d.RegisterBridge(command.RegisterArgoCDAppManifestEventType, command.RegisterArgoCDAppManifestHandler(lifecycle, newArgoClient))
 	if c.ArgoCDAPI != nil {
 		ns := c.ArgoCDNamespace
 		if ns == "" {
@@ -126,4 +147,15 @@ func (c *GitOpsConfig) streamer(log logr.Logger, dyn dynamic.Interface, sender s
 		ns = "argocd"
 	}
 	return status.NewStreamer(log.WithName("status"), dyn, sender, ns, c.InstanceGVRs)
+}
+
+// addonScanner builds the addon discovery scanner (Feature C, plan §6):
+// helm releases matched against the known-addon table are reported to
+// the control plane as adoptable addons. Nil when no scan namespaces are
+// configured (the scanner would have nothing it is allowed to read).
+func (c *GitOpsConfig) addonScanner(meta metadata.Interface, sender addonscan.Sender) *addonscan.Scanner {
+	if meta == nil || len(c.AddonScanNamespaces) == 0 {
+		return nil
+	}
+	return addonscan.NewScanner(meta, sender, addonscan.DefaultKnownAddons, c.AddonScanNamespaces)
 }

@@ -225,8 +225,9 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 //	INARI_GIT_CREDS_SECRET   ESO-materialized GitHub App credentials Secret
 //	                         (keys app-id, installation-id, private-key)
 //	INARI_GIT_CREDS_NAMESPACE Secret namespace (default: agent namespace)
-//	INARI_STATE_REPO         override state repo (owner/name); default
-//	                         <org>/<tenant>-inari-state
+//	INARI_STATE_REPO         manual override state repo (owner/name); the
+//	                         server-bound baseline repo (from registration)
+//	                         takes precedence when set.
 //	INARI_STATE_REPO_ORG     GitHub org for the default state repo
 //	INARI_ARGOCD_MODE        bundle (default) | byo
 //	INARI_ARGOCD_NAMESPACE   ArgoCD install namespace (default argocd)
@@ -258,15 +259,23 @@ func buildGitOps(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Int
 		return nil, err
 	}
 
+	// Addon discovery (Feature C) scans helm release Secrets in the
+	// namespaces RBAC grants — defaulting to the helm watcher list; an
+	// explicit override wins.
+	addonScanNS := os.Getenv("INARI_ADDON_SCAN_NAMESPACES")
+	if addonScanNS == "" {
+		addonScanNS = os.Getenv("INARI_HELM_NAMESPACES")
+	}
 	cfg := &controller.GitOpsConfig{
-		Kube:             kube,
-		Dyn:              dyn,
-		Git:              provider,
-		StateRepo:        os.Getenv("INARI_STATE_REPO"),
-		StateRepoOrg:     os.Getenv("INARI_STATE_REPO_ORG"),
-		ArgoCDMode:       argocd.Mode(os.Getenv("INARI_ARGOCD_MODE")),
-		ArgoCDNamespace:  os.Getenv("INARI_ARGOCD_NAMESPACE"),
-		JournalNamespace: credsNS,
+		Kube:                kube,
+		Dyn:                 dyn,
+		Git:                 provider,
+		StateRepo:           os.Getenv("INARI_STATE_REPO"),
+		StateRepoOrg:        os.Getenv("INARI_STATE_REPO_ORG"),
+		ArgoCDMode:          argocd.Mode(os.Getenv("INARI_ARGOCD_MODE")),
+		ArgoCDNamespace:     os.Getenv("INARI_ARGOCD_NAMESPACE"),
+		JournalNamespace:    credsNS,
+		AddonScanNamespaces: parseNamespaces(addonScanNS),
 	}
 	argocdNS := cfg.ArgoCDNamespace
 	if argocdNS == "" {

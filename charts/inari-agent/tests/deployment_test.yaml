@@ -69,3 +69,19 @@ tests:
           content:
             name: INARI_READYZ_DISCONNECT_GRACE
             value: "45s"
+  - it: omits the addon scan namespaces env by default (falls back to helmNamespaces)
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_ADDON_SCAN_NAMESPACES
+  - it: renders the addon scan namespaces env when configured
+    set:
+      config:
+        addonScanNamespaces: "inari-system,cert-manager"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_ADDON_SCAN_NAMESPACES
+            value: "inari-system,cert-manager"

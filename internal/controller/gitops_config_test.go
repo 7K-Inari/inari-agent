@@ -58,6 +58,17 @@ func TestGitOpsConfigureRegistersHandlers(t *testing.T) {
 	}
 }
 
+func TestAddonScannerGuards(t *testing.T) {
+	// No scan namespaces configured → nil (nothing RBAC allows reading).
+	if s := (&GitOpsConfig{}).addonScanner(nil, nil); s != nil {
+		t.Error("want nil without namespaces")
+	}
+	// Nil metadata client → nil (defensive; production always wires Meta).
+	if s := (&GitOpsConfig{AddonScanNamespaces: []string{"inari-system"}}).addonScanner(nil, nil); s != nil {
+		t.Error("want nil without metadata client")
+	}
+}
+
 func TestGitOpsStateRepoDefault(t *testing.T) {
 	cfg := &GitOpsConfig{StateRepoOrg: "7K-Inari"}
 	if got := cfg.stateRepo("acme"); got != "7K-Inari/acme-inari-state" {
@@ -65,5 +76,52 @@ func TestGitOpsStateRepoDefault(t *testing.T) {
 	}
 	if got := (&GitOpsConfig{}).stateRepo("acme"); got != "" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestGitOpsStateRepoResolutionOrder(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      GitOpsConfig
+		tenantID string
+		want     string
+	}{
+		{
+			name:     "explicit binding wins over env and convention",
+			cfg:      GitOpsConfig{BoundStateRepo: "org/bound-repo", StateRepo: "org/env-repo", StateRepoOrg: "org"},
+			tenantID: "acme",
+			want:     "org/bound-repo",
+		},
+		{
+			name:     "env override wins over convention when no binding",
+			cfg:      GitOpsConfig{StateRepo: "org/env-repo", StateRepoOrg: "org"},
+			tenantID: "acme",
+			want:     "org/env-repo",
+		},
+		{
+			name:     "convention when neither binding nor env",
+			cfg:      GitOpsConfig{StateRepoOrg: "org"},
+			tenantID: "acme",
+			want:     "org/acme-inari-state",
+		},
+		{
+			name:     "empty when nothing set",
+			cfg:      GitOpsConfig{},
+			tenantID: "acme",
+			want:     "",
+		},
+		{
+			name:     "binding wins even when env is set",
+			cfg:      GitOpsConfig{BoundStateRepo: "org/bound-repo", StateRepo: "org/env-repo"},
+			tenantID: "acme",
+			want:     "org/bound-repo",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.stateRepo(tt.tenantID); got != tt.want {
+				t.Errorf("stateRepo(%q) = %q, want %q", tt.tenantID, got, tt.want)
+			}
+		})
 	}
 }

@@ -14,6 +14,18 @@ test:
 test-footprint:
 	hack/check-footprint_test.sh
 
+# envtest assets for the adoption e2e (real apiserver; the test skips
+# gracefully when no binaries are found).
+.PHONY: envtest
+envtest:
+	go run sigs.k8s.io/controller-runtime/tools/setup-envtest@latest use -p path
+
+# Live in-place adoption e2e: kind + ArgoCD + helm cert-manager (manual/
+# nightly; not PR-gated). Requires docker, kind, kubectl, helm.
+.PHONY: test-e2e-adoption
+test-e2e-adoption:
+	hack/e2e-addon-adoption.sh
+
 .PHONY: vet
 vet:
 	go vet ./...

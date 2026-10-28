@@ -23,7 +23,7 @@ func secretStoreApplyEvent(t *testing.T, m *agentv1.SecretStoreApply) *agentv1.E
 
 func TestSecretStoreApplyHandlerDirectCommit(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	h := SecretStoreApplyHandler(deps)
 
 	d := NewDispatcher()
@@ -71,7 +71,7 @@ func TestSecretStoreApplyHandlerDirectCommit(t *testing.T) {
 
 func TestSecretStoreApplyHandlerPlatformScope(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	h := SecretStoreApplyHandler(deps)
 
 	result, _, err := h(context.Background(), secretStoreApplyEvent(t, &agentv1.SecretStoreApply{
@@ -97,7 +97,7 @@ func TestSecretStoreApplyHandlerPlatformScope(t *testing.T) {
 
 func TestSecretStoreApplyRejectsForeignRepo(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	h := SecretStoreApplyHandler(deps)
 
 	result, _, err := h(context.Background(), secretStoreApplyEvent(t, &agentv1.SecretStoreApply{
@@ -123,7 +123,7 @@ func TestSecretStoreApplyRejectsForeignRepo(t *testing.T) {
 
 func TestSecretStoreApplyTransientGitError(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	h := SecretStoreApplyHandler(deps)
 	gp.Err = context.DeadlineExceeded
 
@@ -143,7 +143,7 @@ func TestSecretStoreApplyTransientGitError(t *testing.T) {
 
 func TestSecretStoreDeleteHandler(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	apply := SecretStoreApplyHandler(deps)
 	del := SecretStoreDeleteHandler(deps)
 
@@ -198,7 +198,7 @@ func TestSecretStoreDeleteHandler(t *testing.T) {
 
 func TestSecretStoreDeleteRejectsPullRequestPolicy(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	del := SecretStoreDeleteHandler(deps)
 
 	a, _ := anypb.New(&agentv1.SecretStoreDelete{
@@ -225,7 +225,7 @@ func TestSecretStoreDeleteRejectsPullRequestPolicy(t *testing.T) {
 
 func TestSecretStoreDeleteRejectsPathEscapingName(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	del := SecretStoreDeleteHandler(deps)
 
 	a, _ := anypb.New(&agentv1.SecretStoreDelete{
@@ -251,7 +251,7 @@ func TestSecretStoreDeleteRejectsPathEscapingName(t *testing.T) {
 
 func TestSecretStoreApplyRejectsMissingProvider(t *testing.T) {
 	gp := git.NewMemProvider()
-	deps := GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
+	deps := &GitOpsDeps{Git: gp, DefaultStateRepo: "org/acme-inari-state"}
 	h := SecretStoreApplyHandler(deps)
 
 	result, _, err := h(context.Background(), secretStoreApplyEvent(t, &agentv1.SecretStoreApply{

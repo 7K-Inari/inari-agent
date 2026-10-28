@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/7K-Inari/inari-agent/internal/git"
 	"github.com/7K-Inari/inari-agent/internal/render"
@@ -69,7 +71,7 @@ func (d GitOpsDeps) commit(ctx context.Context, target git.Target, files []git.F
 
 // RenderRGDInstanceHandler renders a KRO instance and commits it to the
 // tenant state repo.
-func RenderRGDInstanceHandler(deps GitOpsDeps, getter render.RGDGetter) KindHandler {
+func RenderRGDInstanceHandler(deps *GitOpsDeps, getter render.RGDGetter) KindHandler {
 	return func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
 		var m agentv1.RenderRgdInstance
 		if err := ev.Payload.UnmarshalTo(&m); err != nil {
@@ -99,9 +101,46 @@ func RenderRGDInstanceHandler(deps GitOpsDeps, getter render.RGDGetter) KindHand
 	}
 }
 
+// GitopsConfigUpdateHandler rebinds the agent to a different baseline repo.
+// It updates the in-memory DefaultStateRepo and persists the new binding to
+// the registration ConfigMap so it survives restarts.
+func GitopsConfigUpdateHandler(deps *GitOpsDeps, kube kubernetes.Interface, namespace string) KindHandler {
+	return func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
+		var m agentv1.GitopsConfigUpdate
+		if err := ev.Payload.UnmarshalTo(&m); err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, "", fmt.Errorf("decode: %w", err)
+		}
+		if m.BaselineRepo == "" {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, "baseline_repo must not be empty", nil
+		}
+		gt := git.Target{Repo: m.BaselineRepo}
+		if _, err := gt.Validate("x/y"); err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, fmt.Sprintf("invalid baseline_repo: %v", err), nil
+		}
+		if m.BaselineRepo == deps.DefaultStateRepo {
+			return agentv1.CommandResult_COMMAND_RESULT_APPLIED, "no change", nil
+		}
+		// Persist the new binding first so a failure doesn't leave the
+		// in-memory state inconsistent with the persisted state.
+		cm, err := kube.CoreV1().ConfigMaps(namespace).Get(ctx, "inari-agent-registration", metav1.GetOptions{})
+		if err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, fmt.Sprintf("get registration ConfigMap: %v", err), nil
+		}
+		if cm.Data == nil {
+			cm.Data = map[string]string{}
+		}
+		cm.Data["baseline-repo"] = m.BaselineRepo
+		if _, err := kube.CoreV1().ConfigMaps(namespace).Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			return agentv1.CommandResult_COMMAND_RESULT_FAILED, fmt.Sprintf("update registration ConfigMap: %v", err), nil
+		}
+		deps.DefaultStateRepo = m.BaselineRepo
+		return agentv1.CommandResult_COMMAND_RESULT_APPLIED, "rebound to " + m.BaselineRepo, nil
+	}
+}
+
 // ApplyBundleHandler fetches a bundle (OCI artifact or git source,
 // checksum-verified) and commits it to the tenant state repo.
-func ApplyBundleHandler(deps GitOpsDeps, bundles render.BundleSource) KindHandler {
+func ApplyBundleHandler(deps *GitOpsDeps, bundles render.BundleSource) KindHandler {
 	return func(ctx context.Context, ev *agentv1.Event) (agentv1.CommandResult, string, error) {
 		var m agentv1.ApplyBundle
 		if err := ev.Payload.UnmarshalTo(&m); err != nil {

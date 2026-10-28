@@ -24,6 +24,7 @@ import (
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 
+	"github.com/7K-Inari/inari-agent/internal/addonscan"
 	"github.com/7K-Inari/inari-agent/internal/capability"
 	"github.com/7K-Inari/inari-agent/internal/command"
 	"github.com/7K-Inari/inari-agent/internal/health"
@@ -131,15 +132,18 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	}
 
 	var streamer *status.Streamer
+	var scanner *addonscan.Scanner
 	if r.GitOps != nil {
 		var redeemer command.UserCredentialRedeemer
 		if r.NewRedeemer != nil {
 			redeemer = r.NewRedeemer(creds, clientSecret)
 		}
+		r.GitOps.BoundStateRepo = creds.BaselineRepo
 		if err := r.GitOps.configure(ctx, handler, creds.TenantID, redeemer); err != nil {
 			return fmt.Errorf("agent lifecycle: gitops setup: %w", err)
 		}
 		streamer = r.GitOps.streamer(r.Log, r.Dynamic, client)
+		scanner = r.GitOps.addonScanner(r.Meta, client)
 	}
 
 	// Fail closed until the stream is actually up: gate command handling on
@@ -176,6 +180,17 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 			}
 		}
 	}
+	if scanner != nil {
+		prev := onConnectedChange
+		onConnectedChange = func(v bool) {
+			if prev != nil {
+				prev(v)
+			}
+			if v {
+				scanner.Reset(ctx)
+			}
+		}
+	}
 	if onConnectedChange != nil {
 		if tracker, ok := client.(interface{ SetOnConnectedChange(func(bool)) }); ok {
 			tracker.SetOnConnectedChange(onConnectedChange)
@@ -185,11 +200,14 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	log.Info("agent registered and connecting",
 		"tenant", creds.TenantID, "cluster", creds.ClusterID, "controlPlane", creds.ControlPlane)
 
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 	go func() { errCh <- client.Run(ctx) }()
 	go func() { errCh <- aggregator.Run(ctx) }()
 	if streamer != nil {
 		go func() { errCh <- streamer.Run(ctx) }()
+	}
+	if scanner != nil {
+		go func() { errCh <- scanner.Run(ctx) }()
 	}
 
 	for {
@@ -235,6 +253,7 @@ func (r *AgentReconciler) loadPersistedCredentials(ctx context.Context) (*regist
 			Namespace: d["secret-namespace"],
 			Key:       d["secret-key"],
 		},
+		BaselineRepo: d["baseline-repo"],
 	}
 	if creds.ClusterID == "" || creds.ClientID == "" || creds.TokenURL == "" {
 		return nil, nil
@@ -259,6 +278,7 @@ func (r *AgentReconciler) persistCredentials(ctx context.Context, creds *registr
 			"secret-name":      creds.SecretRef.Name,
 			"secret-namespace": creds.SecretRef.Namespace,
 			"secret-key":       creds.SecretRef.Key,
+			"baseline-repo":    creds.BaselineRepo,
 		},
 	}
 	_, err := r.Kube.CoreV1().ConfigMaps("inari-system").Create(ctx, cm, metav1.CreateOptions{})
@@ -300,9 +320,16 @@ func (r *AgentReconciler) dispatch(
 	case agentv1.EventType_EVENT_TYPE_APPLY_BUNDLE,
 		agentv1.EventType_EVENT_TYPE_REGISTER_ARGOCD_APP,
 		agentv1.EventType_EVENT_TYPE_INVOKE_ACTION,
-		agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE:
+		agentv1.EventType_EVENT_TYPE_RENDER_RGD_INSTANCE,
+		agentv1.EventType_EVENT_TYPE_GITOPS_CONFIG_UPDATE:
 		r.handleCommand(ctx, client, handler, ev)
 	default:
+		// Feature C addon registrations arrive as structpb bridge commands
+		// under types the pinned enum does not know (bridge.go).
+		if command.IsBridgeCommandType(ev.Type) {
+			r.handleCommand(ctx, client, handler, ev)
+			return
+		}
 		// Compatibility contract: unknown event types are dropped-and-logged,
 		// never fatal (an N−1 gateway may send newer types).
 		r.Log.V(1).Info("dropping unknown event", "type", ev.Type, "eventId", ev.EventId)

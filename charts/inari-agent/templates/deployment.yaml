@@ -63,6 +63,11 @@ spec:
               value: {{ .Values.config.clusterLabels | quote }}
             - name: INARI_HELM_NAMESPACES
               value: {{ .Values.config.helmNamespaces | quote }}
+            {{- with .Values.config.addonScanNamespaces }}
+            # Feature C addon discovery; defaults to helmNamespaces when unset.
+            - name: INARI_ADDON_SCAN_NAMESPACES
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.config.readyzDisconnectGrace }}
             - name: INARI_READYZ_DISCONNECT_GRACE
               value: {{ . | quote }}

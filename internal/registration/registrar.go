@@ -34,6 +34,10 @@ type Credentials struct {
 	ControlPlane string
 	SecretRef    SecretReference
 	ExpiresHint  time.Time
+	// BaselineRepo is the org's assigned baseline GitOps repo for this
+	// cluster (e.g. "myorg/platform-baseline"). Empty when the server has
+	// no registry row yet; the agent falls back to env or convention.
+	BaselineRepo string
 }
 
 // Registrar exchanges a one-time bootstrap token for cluster credentials.

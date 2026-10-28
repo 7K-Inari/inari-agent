@@ -3,14 +3,14 @@ module github.com/7K-Inari/inari-agent
 go 1.26.3
 
 require (
-	connectrpc.com/connect/v2 v2.0.0
-	github.com/7K-Inari/inari-api v0.6.1-0.20261015003247-4a8072241473
+	connectrpc.com/connect/v2 v2.0.2
+	github.com/7K-Inari/inari-api v0.7.0-d1dc5a2.0.20261026085445-0464651127cd
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-logr/logr v1.4.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-github/v92 v92.0.0
-	github.com/google/go-github/v93 v93.0.0
+	github.com/google/uuid v1.6.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/prometheus/client_golang v1.25.0
 	golang.org/x/net v0.61.0
@@ -57,7 +57,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
