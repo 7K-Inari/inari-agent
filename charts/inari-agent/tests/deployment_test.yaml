@@ -85,3 +85,19 @@ tests:
           content:
             name: INARI_ADDON_SCAN_NAMESPACES
             value: "inari-system,cert-manager"
+  - it: omits the status watches env by default (built-in defaults apply)
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_STATUS_WATCHES
+  - it: renders the status watches env when configured
+    set:
+      config:
+        statusWatches: "cert-manager.io/v1/clusterissuers@inari.io/managed-by=inari"
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: INARI_STATUS_WATCHES
+            value: "cert-manager.io/v1/clusterissuers@inari.io/managed-by=inari"

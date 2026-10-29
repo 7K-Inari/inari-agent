@@ -1,9 +1,11 @@
 // Package status streams Application health/sync, KRO instance status, and
-// platform.inari.io CRD status upstream as status-update events (plan §5.3
-// phase 5): near-real-time inventory without the control plane ever polling
-// tenant APIs. Watches are scoped to the ArgoCD namespace, Inari-managed
-// KRO instance GVRs, and the platform CRDs to respect the agent's footprint
-// budget (§12.1/4).
+// configured platform-resource status upstream as status-update events
+// (plan §5.3 phase 5): near-real-time inventory without the control plane
+// ever polling tenant APIs. Watches are scoped to the ArgoCD namespace,
+// Inari-managed KRO instance GVRs, and the configured WatchResource list
+// (legacy platform.inari.io CRDs plus their native replacements —
+// operator-sunset plan risk #4) to respect the agent's footprint budget
+// (§12.1/4).
 package status
 
 import (
@@ -20,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
@@ -27,6 +30,7 @@ import (
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 
 	"github.com/7K-Inari/inari-agent/internal/argocd"
+	"github.com/7K-Inari/inari-agent/internal/capability"
 )
 
 // Sender accepts outbound events (stream.Client).
@@ -34,10 +38,10 @@ type Sender interface {
 	Send(ctx context.Context, event *agentv1.Event) error
 }
 
-// Streamer watches ArgoCD Applications and KRO instance resources and
-// emits status-update events. Emissions are deduped by content; Run emits
-// a full snapshot on start so reconnects resync without control-plane
-// polling.
+// Streamer watches ArgoCD Applications, KRO instance resources, and the
+// configured platform-resource watches, and emits status-update events.
+// Emissions are deduped by content; Run emits a full snapshot on start so
+// reconnects resync without control-plane polling.
 type Streamer struct {
 	Log    logr.Logger
 	Dyn    dynamic.Interface
@@ -45,9 +49,21 @@ type Streamer struct {
 	// Namespace scopes the Application watch (ArgoCD install namespace).
 	Namespace string
 	// InstanceGVRs are KRO instance GVRs to watch (cluster- or
-	// namespace-scoped, per the generated CRD).
+	// namespace-scoped, per the generated CRD). They stream bare kinds —
+	// the server's inventory contract for KRO instances is unqualified.
 	InstanceGVRs []schema.GroupVersionResource
-	// TweakListOptions narrows watches further (label selectors).
+	// Watches are the configured cluster-wide platform-resource watches
+	// (legacy platform.inari.io CRDs plus native replacements). Objects
+	// from these watches stream the group-qualified kind "<Kind>.<group>".
+	Watches []WatchResource
+	// Discovery, when set, filters Watches to APIs actually served by the
+	// cluster (one discovery call per group/version, fail-open on
+	// transient errors) so absent optional CRDs don't spin reflector
+	// error loops. Nil disables filtering.
+	Discovery discovery.DiscoveryInterface
+	// TweakListOptions narrows the Application and InstanceGVR watches
+	// further (label selectors). WatchResource entries carry their own
+	// per-entry selector instead.
 	TweakListOptions func(*metav1.ListOptions)
 
 	mu      sync.Mutex
@@ -55,13 +71,14 @@ type Streamer struct {
 }
 
 // NewStreamer returns a Streamer.
-func NewStreamer(log logr.Logger, dyn dynamic.Interface, sender Sender, namespace string, instanceGVRs []schema.GroupVersionResource) *Streamer {
+func NewStreamer(log logr.Logger, dyn dynamic.Interface, sender Sender, namespace string, instanceGVRs []schema.GroupVersionResource, watches []WatchResource) *Streamer {
 	return &Streamer{
 		Log:          log,
 		Dyn:          dyn,
 		Sender:       sender,
 		Namespace:    namespace,
 		InstanceGVRs: instanceGVRs,
+		Watches:      watches,
 		lastSum:      map[string]string{},
 	}
 }
@@ -79,33 +96,60 @@ func (s *Streamer) Reset() {
 func (s *Streamer) Run(ctx context.Context) error {
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(s.Dyn, 0, s.Namespace, s.TweakListOptions)
 	appInformer := factory.ForResource(argocd.ApplicationGVR).Informer()
-	stops := []cache.SharedIndexInformer{appInformer}
+	stops := []qualifiedInformer{{appInformer, false}}
+	factories := []dynamicinformer.DynamicSharedInformerFactory{factory}
 
 	clusterFactory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(s.Dyn, 0, metav1.NamespaceAll, s.TweakListOptions)
+	factories = append(factories, clusterFactory)
+	instanceGVRs := map[schema.GroupVersionResource]bool{}
 	for _, gvr := range s.InstanceGVRs {
+		instanceGVRs[gvr] = true
 		inf := clusterFactory.ForResource(gvr).Informer()
-		stops = append(stops, inf)
+		stops = append(stops, qualifiedInformer{inf, false})
 	}
-	for _, gvr := range PlatformGVRs {
-		inf := clusterFactory.ForResource(gvr).Informer()
-		stops = append(stops, inf)
+	for _, w := range s.filteredWatches() {
+		// A GVR already watched via InstanceGVRs shares this factory's
+		// informer: a second handler would emit the same object twice
+		// with conflicting kinds (bare and group-qualified).
+		if instanceGVRs[w.GVR] {
+			s.Log.Info("status watch already covered by InstanceGVRs, skipping duplicate", "gvr", w.GVR.String())
+			continue
+		}
+		// Entries with a label selector need their own factory: the
+		// shared clusterFactory's TweakListOptions is global, not
+		// per-GVR. Selector-less entries share the cluster factory.
+		f := clusterFactory
+		if w.LabelSelector != "" {
+			selector := w.LabelSelector
+			f = dynamicinformer.NewFilteredDynamicSharedInformerFactory(s.Dyn, 0, metav1.NamespaceAll,
+				func(opts *metav1.ListOptions) {
+					if s.TweakListOptions != nil {
+						s.TweakListOptions(opts)
+					}
+					opts.LabelSelector = selector
+				})
+			factories = append(factories, f)
+		}
+		inf := f.ForResource(w.GVR).Informer()
+		stops = append(stops, qualifiedInformer{inf, true})
 	}
 
-	for _, inf := range stops {
-		if _, err := inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
-			AddFunc:    func(obj any) { s.emit(ctx, obj) },
-			UpdateFunc: func(_, obj any) { s.emit(ctx, obj) },
-			DeleteFunc: func(obj any) { s.emitDelete(ctx, obj) },
+	for _, qi := range stops {
+		if _, err := qi.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    func(obj any) { s.emit(ctx, obj, qi.qualify) },
+			UpdateFunc: func(_, obj any) { s.emit(ctx, obj, qi.qualify) },
+			DeleteFunc: func(obj any) { s.emitDelete(ctx, obj, qi.qualify) },
 		}); err != nil {
 			return fmt.Errorf("status: register handler: %w", err)
 		}
 	}
 
-	factory.Start(ctx.Done())
-	clusterFactory.Start(ctx.Done())
+	for _, f := range factories {
+		f.Start(ctx.Done())
+	}
 	syncs := []cache.InformerSynced{}
-	for _, inf := range stops {
-		syncs = append(syncs, inf.HasSynced)
+	for _, qi := range stops {
+		syncs = append(syncs, qi.HasSynced)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), syncs...) {
 		if ctx.Err() != nil {
@@ -117,15 +161,54 @@ func (s *Streamer) Run(ctx context.Context) error {
 	return nil
 }
 
+// filteredWatches applies the optional discovery filter: watches whose API
+// the cluster does not serve are skipped with one log line each (same
+// semantics as capability.FilterAvailable) so absent optional CRDs —
+// e.g. platform.inari.io on tenant clusters, cert-manager where not
+// installed — don't spin reflector error loops. Without a Discovery
+// client the watches pass through unfiltered.
+func (s *Streamer) filteredWatches() []WatchResource {
+	if s.Discovery == nil {
+		return s.Watches
+	}
+	// Cache per GVR, not per group/version: a group/version may be
+	// served while an individual resource in it is not (partial CRD
+	// install). Startup discovery calls stay bounded by the watch count.
+	checked := map[schema.GroupVersionResource]bool{}
+	out := make([]WatchResource, 0, len(s.Watches))
+	for _, w := range s.Watches {
+		avail, known := checked[w.GVR]
+		if !known {
+			avail = capability.ResourceServed(s.Discovery, w.GVR)
+			checked[w.GVR] = avail
+		}
+		if !avail {
+			s.Log.Info("status watch skipped: API not installed on this cluster", "gvr", w.GVR.String())
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// qualifiedInformer pairs an informer with whether its objects stream the
+// group-qualified ResourceRef kind ("<Kind>.<group>"). Configured watch
+// resources qualify (decision D-A); Applications and KRO InstanceGVRs keep
+// bare kinds — the server's existing contract for those is unqualified.
+type qualifiedInformer struct {
+	cache.SharedIndexInformer
+	qualify bool
+}
+
 // emit maps one object to a StatusUpdate and sends it when changed. The
 // dedupe entry is updated only after a successful send so a transient
 // failure is retried on the next informer event.
-func (s *Streamer) emit(ctx context.Context, obj any) {
+func (s *Streamer) emit(ctx context.Context, obj any, qualify bool) {
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
 		return
 	}
-	upd, key := mapFor(u)
+	upd, key := s.mapFor(u, qualify)
 	sum := checksum(upd)
 	s.mu.Lock()
 	if s.lastSum[key] == sum {
@@ -144,7 +227,7 @@ func (s *Streamer) emit(ctx context.Context, obj any) {
 
 // emitDelete streams a terminal missing-status update for a removed
 // resource and prunes its dedupe entry so a later re-add re-emits.
-func (s *Streamer) emitDelete(ctx context.Context, obj any) {
+func (s *Streamer) emitDelete(ctx context.Context, obj any, qualify bool) {
 	if tombstone, ok := obj.(cache.DeletedFinalStateUnknown); ok {
 		obj = tombstone.Obj
 	}
@@ -153,8 +236,8 @@ func (s *Streamer) emitDelete(ctx context.Context, obj any) {
 		return
 	}
 	kind := u.GetKind()
-	if isPlatformGroup(u) {
-		kind = platformKind(u)
+	if qualify || isPlatformGroup(u) {
+		kind = qualifiedKind(u)
 	}
 	key := fmt.Sprintf("%s/%s/%s/%s", kind, u.GetNamespace(), u.GetName(), u.GetUID())
 	upd := &agentv1.StatusUpdate{
@@ -194,18 +277,26 @@ func (s *Streamer) send(ctx context.Context, key string, upd *agentv1.StatusUpda
 }
 
 // mapFor routes platform.inari.io objects to the platform condition mapper
-// and everything else to the Application/KRO mapper.
-func mapFor(u *unstructured.Unstructured) (*agentv1.StatusUpdate, string) {
+// and everything else to the generic mapper, which also covers the native
+// replacement resources (Ready-condition and health/sync fallbacks).
+func (s *Streamer) mapFor(u *unstructured.Unstructured, qualify bool) (*agentv1.StatusUpdate, string) {
 	if isPlatformGroup(u) {
 		return mapPlatformStatus(u)
 	}
-	return mapStatus(u)
+	kind := u.GetKind()
+	if qualify {
+		kind = qualifiedKind(u)
+	}
+	return mapStatus(u, kind)
 }
 
-// mapStatus converts an Application or KRO instance into a StatusUpdate.
-func mapStatus(u *unstructured.Unstructured) (*agentv1.StatusUpdate, string) {
+// mapStatus converts an Application, KRO instance, or configured native
+// watch resource into a StatusUpdate. kind is the ResourceRef kind the
+// server routes on (bare for Applications/KRO instances, group-qualified
+// for configured watch resources).
+func mapStatus(u *unstructured.Unstructured, kind string) (*agentv1.StatusUpdate, string) {
 	ref := &agentv1.ResourceRef{
-		Kind:      u.GetKind(),
+		Kind:      kind,
 		Name:      u.GetName(),
 		Namespace: u.GetNamespace(),
 		Uid:       string(u.GetUID()),
@@ -221,7 +312,7 @@ func mapStatus(u *unstructured.Unstructured) (*agentv1.StatusUpdate, string) {
 			msg = strings.TrimSpace(msg + " " + condMsg)
 		}
 	}
-	key := fmt.Sprintf("%s/%s/%s/%s", u.GetKind(), u.GetNamespace(), u.GetName(), u.GetUID())
+	key := fmt.Sprintf("%s/%s/%s/%s", kind, u.GetNamespace(), u.GetName(), u.GetUID())
 	return &agentv1.StatusUpdate{
 		Resource:      ref,
 		Health:        health,

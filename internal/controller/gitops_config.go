@@ -57,6 +57,14 @@ type GitOpsConfig struct {
 	// InstanceGVRs are KRO instance GVRs the status streamer watches.
 	InstanceGVRs []schema.GroupVersionResource
 
+	// StatusWatches are the cluster-wide platform-resource watches
+	// (legacy platform.inari.io CRDs plus native replacements — cert-manager
+	// ClusterIssuer, external-dns DNSEndpoint, argoproj AppProject/
+	// ApplicationSet, KRO tenantnamespace instances). Nil applies
+	// status.DefaultWatchResources(); INARI_STATUS_WATCHES overrides at
+	// the cmd layer.
+	StatusWatches []status.WatchResource
+
 	// AddonScanNamespaces scopes the addon scanner's helm-secret watches
 	// (least privilege: the agent has no cluster-wide secrets grant, see
 	// config/rbac). Empty disables the scanner.
@@ -146,7 +154,18 @@ func (c *GitOpsConfig) streamer(log logr.Logger, dyn dynamic.Interface, sender s
 	if ns == "" {
 		ns = "argocd"
 	}
-	return status.NewStreamer(log.WithName("status"), dyn, sender, ns, c.InstanceGVRs)
+	watches := c.StatusWatches
+	if watches == nil {
+		watches = status.DefaultWatchResources()
+	}
+	s := status.NewStreamer(log.WithName("status"), dyn, sender, ns, c.InstanceGVRs, watches)
+	// Skip watches for optional platforms absent from this cluster
+	// (platform CRDs on tenant clusters, cert-manager where not
+	// installed) instead of hot-looping reflector errors.
+	if c.Kube != nil {
+		s.Discovery = c.Kube.Discovery()
+	}
+	return s
 }
 
 // addonScanner builds the addon discovery scanner (Feature C, plan §6):
