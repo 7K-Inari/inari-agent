@@ -357,9 +357,17 @@ func TestAggregatorBatchesRespectByteBudget(t *testing.T) {
 		if b := chunkBytes(u.Capabilities); b > 2500 {
 			t.Errorf("update %d = %d bytes, over the 2500 budget", i, b)
 		}
-		if u.StateChecksum != agg.Checksum() {
-			t.Errorf("update %d checksum must match the post-batch snapshot", i)
+	}
+	// Only the LAST chunk of a split batch carries the checksum: it asserts
+	// the whole batch was applied, so an earlier commit would let a
+	// mid-batch stream drop strand the unsent chunks undetected.
+	for i, u := range updates[:len(updates)-1] {
+		if u.StateChecksum != "" {
+			t.Errorf("update %d checksum = %q, want empty (only the last chunk commits)", i, u.StateChecksum)
 		}
+	}
+	if last := updates[len(updates)-1]; last.StateChecksum != agg.Checksum() {
+		t.Errorf("last update checksum must match the post-batch snapshot")
 	}
 }
 

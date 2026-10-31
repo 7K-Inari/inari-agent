@@ -171,7 +171,7 @@ func (a *Aggregator) Run(ctx context.Context) error {
 				}
 			}
 			timer.Stop()
-			if err := a.send(ctx, batch, false); err != nil {
+			if err := a.send(ctx, batch); err != nil {
 				return err
 			}
 		}
@@ -232,13 +232,24 @@ func (a *Aggregator) ReplayFullState(ctx context.Context) error {
 	return a.sendChunk(ctx, nil, true, checksum)
 }
 
-func (a *Aggregator) send(ctx context.Context, caps []*agentv1.Capability, fullSync bool) error {
-	if a.Client == nil || len(caps) == 0 && !fullSync {
+// send streams one incremental (non-full-sync) batch, byte-chunked. The
+// batch checksum rides only the LAST chunk: it asserts the whole batch was
+// applied, so committing it on an earlier chunk would let a mid-batch
+// stream drop strand the unsent chunks undetected — the handshake would
+// see matching checksums and never resync (full-sync replays frame their
+// own chunks in ReplayFullState and never go through here).
+func (a *Aggregator) send(ctx context.Context, caps []*agentv1.Capability) error {
+	if a.Client == nil || len(caps) == 0 {
 		return nil
 	}
 	checksum := a.Checksum()
-	for _, chunk := range splitByByteBudget(caps, a.MaxBatchBytes) {
-		if err := a.sendChunk(ctx, chunk, fullSync, checksum); err != nil {
+	chunks := splitByByteBudget(caps, a.MaxBatchBytes)
+	for i, chunk := range chunks {
+		chunkChecksum := ""
+		if i == len(chunks)-1 {
+			chunkChecksum = checksum
+		}
+		if err := a.sendChunk(ctx, chunk, false, chunkChecksum); err != nil {
 			return err
 		}
 	}

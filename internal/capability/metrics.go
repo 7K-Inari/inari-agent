@@ -31,6 +31,6 @@ var (
 		Subsystem: "capability",
 		Name:      "update_chunk_bytes",
 		Help:      "Summed proto size of capabilities per CapabilityUpdate event (byte-bounded chunking).",
-		Buckets:   prometheus.ExponentialBuckets(1024, 4, 6), // 1KiB … 4MiB
+		Buckets:   prometheus.ExponentialBuckets(1024, 4, 7), // 1KiB … 4MiB
 	})
 )
