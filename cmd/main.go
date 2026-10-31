@@ -240,9 +240,7 @@ func buildLifecycle(restConfig *rest.Config, mgr manager.Manager) (*controller.A
 //	                         [@label-selector] entries (selectors keep
 //	                         full metav1 syntax, commas included);
 //	                         replaces the
-//	                         built-in defaults when set. This is how the
-//	                         KRO tenantnamespace instance GVR (generated
-//	                         from the RGD's spec.schema) gets watched.
+//	                         built-in defaults when set.
 //
 // Without INARI_GIT_CREDS_SECRET the agent runs M1-only (commands stay
 // no-op), preserving standalone deployability.
@@ -309,7 +307,7 @@ func buildGitOps(ctx context.Context, kube kubernetes.Interface, dyn dynamic.Int
 
 // statusWatches resolves the status streamer watch list: the
 // INARI_STATUS_WATCHES override when set, otherwise the built-in defaults
-// (legacy platform.inari.io CRDs plus native replacements). Invalid
+// (the server-rendered platform resources, ADR-0017). Invalid
 // overrides fail boot loudly — silently watching nothing would blind the
 // Resources Inventory (operator-sunset plan risk #4).
 func statusWatches() ([]status.WatchResource, error) {

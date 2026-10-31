@@ -62,10 +62,10 @@ func TestGoldenPath(t *testing.T) {
 		argocd.ApplicationGVR: "ApplicationList",
 		{Group: "kro.run", Version: "v1alpha1", Resource: "resourcegraphdefinitions"}: "ResourceGraphDefinitionList",
 	}
-	// The status streamer watches the platform CRDs; the fake client needs
-	// a registered list kind per GVR.
-	for _, gvr := range status.PlatformGVRs {
-		listKinds[gvr] = gvr.Resource + "List"
+	// The status streamer watches the default platform-resource GVRs; the
+	// fake client needs a registered list kind per GVR.
+	for _, w := range status.DefaultWatchResources() {
+		listKinds[w.GVR] = w.GVR.Resource + "List"
 	}
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, rgd)
 	kube := k8sfake.NewSimpleClientset()

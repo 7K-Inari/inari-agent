@@ -86,10 +86,10 @@ func kroInstance(name string, ready string) *unstructured.Unstructured {
 
 var webServiceGVR = schema.GroupVersionResource{Group: "inari.dev", Version: "v1alpha1", Resource: "webservices"}
 
-func keycloakRealm(name string, conditions ...interface{}) *unstructured.Unstructured {
+func tenantRealm(name string, conditions ...interface{}) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "platform.inari.io/v1alpha1",
-		"kind":       "KeycloakRealm",
+		"apiVersion": "identity.inari.io/v1alpha1",
+		"kind":       "TenantRealm",
 		"metadata":   map[string]interface{}{"name": name, "namespace": "tenant-acme", "uid": "uid-" + name},
 		"status":     map[string]interface{}{"conditions": conditions},
 	}}
@@ -200,9 +200,10 @@ func TestStreamerKROInstanceConditions(t *testing.T) {
 	}
 }
 
-func TestStreamerPlatformFailedCondition(t *testing.T) {
+func TestStreamerClaimNotReadyCondition(t *testing.T) {
 	sender := &captureSender{signal: make(chan struct{}, 8)}
-	dyn := newDyn(keycloakRealm("acme", map[string]interface{}{"type": "Failed", "status": "True", "message": "realm error"}))
+	// Ready=False without a reason maps to DEGRADED in the generic mapper.
+	dyn := newDyn(tenantRealm("acme", map[string]interface{}{"type": "Ready", "status": "False", "message": "realm error"}))
 	startStreamer(t, dyn, sender)
 
 	select {
@@ -212,9 +213,9 @@ func TestStreamerPlatformFailedCondition(t *testing.T) {
 	}
 	upd := lastStatus(t, sender.at(0))
 	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_DEGRADED {
-		t.Fatalf("platform update %+v", upd)
+		t.Fatalf("claim update %+v", upd)
 	}
-	if upd.Resource.Kind != "KeycloakRealm.platform.inari.io" {
+	if upd.Resource.Kind != "TenantRealm.identity.inari.io" {
 		t.Fatalf("kind %q", upd.Resource.Kind)
 	}
 	if upd.Resource.Name != "acme" || upd.Resource.Namespace != "tenant-acme" || upd.Resource.Uid != "uid-acme" {
@@ -222,25 +223,6 @@ func TestStreamerPlatformFailedCondition(t *testing.T) {
 	}
 	if upd.Message != "realm error" {
 		t.Fatalf("message %q", upd.Message)
-	}
-}
-
-func TestEmitDeletePlatformKindSuffix(t *testing.T) {
-	sender := &captureSender{signal: make(chan struct{}, 8)}
-	s := NewStreamer(logr.Discard(), newDyn(), sender, "argocd", nil, nil)
-	obj := keycloakRealm("acme", map[string]interface{}{"type": "Ready", "status": "True"})
-
-	s.emit(context.Background(), obj, false)
-	s.emitDelete(context.Background(), obj, false)
-	if sender.count() != 2 {
-		t.Fatalf("expected create + delete events, got %d", sender.count())
-	}
-	upd := lastStatus(t, sender.at(1))
-	if upd.Health != agentv1.HealthStatus_HEALTH_STATUS_MISSING {
-		t.Fatalf("delete update %+v", upd)
-	}
-	if upd.Resource.Kind != "KeycloakRealm.platform.inari.io" {
-		t.Fatalf("delete kind %q", upd.Resource.Kind)
 	}
 }
 

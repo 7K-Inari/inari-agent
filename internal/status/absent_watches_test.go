@@ -21,40 +21,43 @@ import (
 	"github.com/7K-Inari/inari-agent/internal/argocd"
 )
 
-func legacyPlatformWatches() []WatchResource {
-	out := make([]WatchResource, 0, len(PlatformGVRs))
-	for _, gvr := range PlatformGVRs {
-		out = append(out, WatchResource{GVR: gvr})
+// absentGroup is a guaranteed-uninstalled API group standing in for any
+// optional watch target the cluster does not serve.
+const absentGroup = "absent.example.io"
+
+func absentWatches() []WatchResource {
+	return []WatchResource{
+		{GVR: schema.GroupVersionResource{Group: absentGroup, Version: "v1alpha1", Resource: "widgets"}},
+		{GVR: schema.GroupVersionResource{Group: absentGroup, Version: "v1alpha1", Resource: "gadgets"}},
 	}
-	return out
 }
 
 func absentCRDFake(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	listKinds := map[schema.GroupVersionResource]string{
 		argocd.ApplicationGVR: "ApplicationList",
 	}
-	for _, gvr := range PlatformGVRs {
-		listKinds[gvr] = gvr.Resource + "List"
+	for _, w := range absentWatches() {
+		listKinds[w.GVR] = w.GVR.Resource + "List"
 	}
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
 }
 
-// When the platform.inari.io CRDs are not installed (tenant clusters — only
-// the platform cluster runs inari-operator) and no discovery filter is
-// configured, platform lists fail with NotFound. Application and KRO status
-// emission must continue: each shared informer delivers events once its own
-// cache syncs, independently of the failing platform reflectors.
-func TestAbsentPlatformCRDsDoNotBlockApplicationEmission(t *testing.T) {
+// When a configured watch's API is not installed (optional CRDs absent)
+// and no discovery filter is configured, its lists fail with NotFound.
+// Application and KRO status emission must continue: each shared informer
+// delivers events once its own cache syncs, independently of the failing
+// reflectors.
+func TestAbsentWatchedAPIsDoNotBlockApplicationEmission(t *testing.T) {
 	dyn := absentCRDFake(app("my-web", "Healthy", "Synced"))
-	// Simulate a cluster without the CRDs: platform lists return NotFound.
+	// Simulate a cluster without the watched APIs: lists return NotFound.
 	dyn.PrependReactor("list", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		if action.GetResource().Group == PlatformGroup {
+		if action.GetResource().Group == absentGroup {
 			return true, nil, apierrors.NewNotFound(action.GetResource().GroupResource(), "")
 		}
 		return false, nil, nil
 	})
 	sender := &captureSender{signal: make(chan struct{}, 8)}
-	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, legacyPlatformWatches())
+	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, absentWatches())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -63,7 +66,7 @@ func TestAbsentPlatformCRDsDoNotBlockApplicationEmission(t *testing.T) {
 	select {
 	case <-sender.signal:
 	case <-time.After(5 * time.Second):
-		t.Fatal("no Application status emitted when platform CRDs are absent")
+		t.Fatal("no Application status emitted when watched APIs are absent")
 	}
 	upd := lastStatus(t, sender.at(0))
 	if upd.Resource.Kind != "Application" || upd.Health != agentv1.HealthStatus_HEALTH_STATUS_HEALTHY {
@@ -77,14 +80,14 @@ func TestAbsentPlatformCRDsDoNotBlockApplicationEmission(t *testing.T) {
 // emit normally.
 func TestDiscoveryFilterSkipsAbsentWatches(t *testing.T) {
 	dyn := absentCRDFake(app("my-web", "Healthy", "Synced"))
-	var platformLists atomic.Int32
+	var absentLists atomic.Int32
 	dyn.PrependReactor("list", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
-		if action.GetResource().Group == PlatformGroup {
-			platformLists.Add(1)
+		if action.GetResource().Group == absentGroup {
+			absentLists.Add(1)
 		}
 		return false, nil, nil
 	})
-	// Discovery serves only argoproj.io — the platform group is absent.
+	// Discovery serves only argoproj.io — the watched group is absent.
 	disc := &discoveryfake.FakeDiscovery{Fake: &k8stesting.Fake{Resources: []*metav1.APIResourceList{
 		{
 			GroupVersion: "argoproj.io/v1alpha1",
@@ -92,7 +95,7 @@ func TestDiscoveryFilterSkipsAbsentWatches(t *testing.T) {
 		},
 	}}}
 	sender := &captureSender{signal: make(chan struct{}, 8)}
-	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, legacyPlatformWatches())
+	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, absentWatches())
 	s.Discovery = disc
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,7 +107,7 @@ func TestDiscoveryFilterSkipsAbsentWatches(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no Application status emitted with discovery filtering")
 	}
-	if got := platformLists.Load(); got != 0 {
+	if got := absentLists.Load(); got != 0 {
 		t.Fatalf("skipped watch must never list the absent API, got %d list calls", got)
 	}
 }
@@ -123,10 +126,10 @@ func (d errDiscovery) ServerResourcesForGroupVersion(string) (*metav1.APIResourc
 // capability.FilterAvailable): the API may be served later, so the watch
 // is kept and its reflector retries on its own.
 func TestDiscoveryFilterFailsOpenOnError(t *testing.T) {
-	s := NewStreamer(logr.Discard(), absentCRDFake(), &captureSender{}, "argocd", nil, legacyPlatformWatches())
+	s := NewStreamer(logr.Discard(), absentCRDFake(), &captureSender{}, "argocd", nil, absentWatches())
 	s.Discovery = errDiscovery{err: apierrors.NewServiceUnavailable("apiserver restarting")}
 
-	if got := s.filteredWatches(); len(got) != len(PlatformGVRs) {
-		t.Fatalf("fail-open must keep all watches, kept %d of %d", len(got), len(PlatformGVRs))
+	if got := s.filteredWatches(); len(got) != len(absentWatches()) {
+		t.Fatalf("fail-open must keep all watches, kept %d of %d", len(got), len(absentWatches()))
 	}
 }

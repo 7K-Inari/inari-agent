@@ -3,9 +3,8 @@
 // (plan §5.3 phase 5): near-real-time inventory without the control plane
 // ever polling tenant APIs. Watches are scoped to the ArgoCD namespace,
 // Inari-managed KRO instance GVRs, and the configured WatchResource list
-// (legacy platform.inari.io CRDs plus their native replacements —
-// operator-sunset plan risk #4) to respect the agent's footprint budget
-// (§12.1/4).
+// (the server-rendered platform resources — operator-sunset plan risk #4)
+// to respect the agent's footprint budget (§12.1/4).
 package status
 
 import (
@@ -53,8 +52,10 @@ type Streamer struct {
 	// the server's inventory contract for KRO instances is unqualified.
 	InstanceGVRs []schema.GroupVersionResource
 	// Watches are the configured cluster-wide platform-resource watches
-	// (legacy platform.inari.io CRDs plus native replacements). Objects
-	// from these watches stream the group-qualified kind "<Kind>.<group>".
+	// (the server-rendered platform resources: provider-keycloak claims,
+	// the KRO tenantnamespace instance, native cert-manager/external-dns/
+	// argoproj resources). Objects from these watches stream the
+	// group-qualified kind "<Kind>.<group>".
 	Watches []WatchResource
 	// Discovery, when set, filters Watches to APIs actually served by the
 	// cluster (one discovery call per group/version, fail-open on
@@ -164,9 +165,9 @@ func (s *Streamer) Run(ctx context.Context) error {
 // filteredWatches applies the optional discovery filter: watches whose API
 // the cluster does not serve are skipped with one log line each (same
 // semantics as capability.FilterAvailable) so absent optional CRDs —
-// e.g. platform.inari.io on tenant clusters, cert-manager where not
-// installed — don't spin reflector error loops. Without a Discovery
-// client the watches pass through unfiltered.
+// e.g. the identity.inari.io claims or cert-manager where not installed —
+// don't spin reflector error loops. Without a Discovery client the watches
+// pass through unfiltered.
 func (s *Streamer) filteredWatches() []WatchResource {
 	if s.Discovery == nil {
 		return s.Watches
@@ -236,7 +237,7 @@ func (s *Streamer) emitDelete(ctx context.Context, obj any, qualify bool) {
 		return
 	}
 	kind := u.GetKind()
-	if qualify || isPlatformGroup(u) {
+	if qualify {
 		kind = qualifiedKind(u)
 	}
 	key := fmt.Sprintf("%s/%s/%s/%s", kind, u.GetNamespace(), u.GetName(), u.GetUID())
@@ -276,13 +277,11 @@ func (s *Streamer) send(ctx context.Context, key string, upd *agentv1.StatusUpda
 	return nil
 }
 
-// mapFor routes platform.inari.io objects to the platform condition mapper
-// and everything else to the generic mapper, which also covers the native
-// replacement resources (Ready-condition and health/sync fallbacks).
+// mapFor converts a watched object into a StatusUpdate via the generic
+// mapper (Ready-condition and health/sync fallbacks), which covers the
+// server-rendered platform resources (claims, KRO instances, native
+// manifests all carry a Ready condition or ArgoCD health/sync).
 func (s *Streamer) mapFor(u *unstructured.Unstructured, qualify bool) (*agentv1.StatusUpdate, string) {
-	if isPlatformGroup(u) {
-		return mapPlatformStatus(u)
-	}
 	kind := u.GetKind()
 	if qualify {
 		kind = qualifiedKind(u)

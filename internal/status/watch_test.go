@@ -133,22 +133,26 @@ func TestDefaultWatchResources(t *testing.T) {
 		}
 		byResource[w.GVR] = true
 	}
-	// Legacy operator CRs: dual-run coverage until Phase 4 removes them.
-	for _, res := range []string{"keycloakrealms", "keycloakclients", "dnszones", "dnsrecords", "tenantnamespaces"} {
-		gvr := schema.GroupVersionResource{Group: PlatformGroup, Version: "v1alpha1", Resource: res}
-		if !byResource[gvr] {
-			t.Errorf("legacy platform GVR %s missing from defaults", gvr)
-		}
-	}
-	// Native replacements (parent plan §4.1).
+	// Server-rendered platform resources (operator sunset, ADR-0017):
+	// provider-keycloak claims, the KRO tenantnamespace instance, and the
+	// native cert-manager/external-dns/argoproj resources.
 	for _, gvr := range []schema.GroupVersionResource{
+		{Group: "identity.inari.io", Version: "v1alpha1", Resource: "tenantrealms"},
+		{Group: "identity.inari.io", Version: "v1alpha1", Resource: "tenantclients"},
+		{Group: "stacks.inari.io", Version: "v1alpha1", Resource: "tenantnamespaces"},
 		{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"},
 		{Group: "externaldns.k8s.io", Version: "v1alpha1", Resource: "dnsendpoints"},
 		{Group: "argoproj.io", Version: "v1alpha1", Resource: "appprojects"},
 		{Group: "argoproj.io", Version: "v1alpha1", Resource: "applicationsets"},
 	} {
 		if !byResource[gvr] {
-			t.Errorf("native GVR %s missing from defaults", gvr)
+			t.Errorf("platform resource GVR %s missing from defaults", gvr)
+		}
+	}
+	// The retired operator CRDs must not linger in the defaults (D7).
+	for _, w := range defaults {
+		if w.GVR.Group == "platform.inari.io" {
+			t.Errorf("legacy platform.inari.io GVR %s leaked into defaults", w.GVR)
 		}
 	}
 }
@@ -161,10 +165,9 @@ func TestQualifiedKind(t *testing.T) {
 		}}
 	}
 	// Group-qualified form: the server routes on the ".<group>" suffix
-	// (decision D-A); legacy platform.inari.io output is byte-identical
-	// to the pre-generalization platformKind.
-	if got := qualifiedKind(obj("platform.inari.io/v1alpha1", "KeycloakRealm")); got != "KeycloakRealm.platform.inari.io" {
-		t.Errorf("legacy platform kind = %q", got)
+	// (decision D-A).
+	if got := qualifiedKind(obj("identity.inari.io/v1alpha1", "TenantRealm")); got != "TenantRealm.identity.inari.io" {
+		t.Errorf("claim kind = %q", got)
 	}
 	if got := qualifiedKind(obj("cert-manager.io/v1", "ClusterIssuer")); got != "ClusterIssuer.cert-manager.io" {
 		t.Errorf("native kind = %q", got)
