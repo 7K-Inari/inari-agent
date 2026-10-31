@@ -39,17 +39,19 @@ rules:
   - apiGroups: ["kro.run"]
     resources: ["*"]
     verbs: ["get", "list", "watch"]
-  # Platform-cluster CRDs reconciled by inari-operator (status streamer,
-  # M3/M7): condition status is streamed upstream with the
-  # ".platform.inari.io" kind suffix. Dual-run coverage until Phase 4 of
-  # the operator-sunset plan removes them.
-  - apiGroups: ["platform.inari.io"]
-    resources: ["keycloakrealms", "keycloakclients", "dnszones", "dnsrecords", "tenantnamespaces"]
+  # Server-rendered platform resources (status streamer, operator sunset
+  # ADR-0017): condition status is streamed upstream with the
+  # group-qualified kind ("<Kind>.<group>"). The KRO tenantnamespace
+  # instance group is the RGD-generated stacks.inari.io (granted here; the
+  # per-RGD note above covers any future RGD groups).
+  - apiGroups: ["identity.inari.io"]
+    resources: ["tenantrealms", "tenantclients"]
     verbs: ["get", "list", "watch"]
-  # Native replacements for the operator facade CRDs (status streamer,
-  # operator-sunset plan §4.1): group-qualified kinds upstream. The KRO
-  # tenantnamespace instance group (generated per-RGD) needs a grant like
-  # the KRO note above when it lands outside kro.run.
+  - apiGroups: ["stacks.inari.io"]
+    resources: ["tenantnamespaces"]
+    verbs: ["get", "list", "watch"]
+  # Native platform resources rendered hub-side (status streamer,
+  # operator-sunset plan §4.1): group-qualified kinds upstream.
   - apiGroups: ["cert-manager.io"]
     resources: ["clusterissuers"]
     verbs: ["get", "list", "watch"]

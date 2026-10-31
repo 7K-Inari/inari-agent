@@ -59,11 +59,11 @@ config:
   readyzDisconnectGrace: ""
   # Status streamer watch list override: semicolon-separated
   # group/version/resource[@label-selector] entries, replacing the built-in
-  # defaults (legacy platform.inari.io CRDs + cert-manager ClusterIssuers +
-  # external-dns DNSEndpoints + argoproj AppProjects/ApplicationSets).
-  # Use this to watch the KRO tenantnamespace instance GVR once the RGD's
-  # generated group/kind is known. Selectors keep full metav1 syntax
-  # (commas, set-based "in (...)"). Empty uses the defaults.
+  # defaults (provider-keycloak TenantRealm/TenantClient claims + the KRO
+  # tenantnamespace instance + cert-manager ClusterIssuers + external-dns
+  # DNSEndpoints + argoproj AppProjects/ApplicationSets). Selectors keep
+  # full metav1 syntax (commas, set-based "in (...)"). Empty uses the
+  # defaults.
   statusWatches: ""
 
 # OIDC client secret delivery (plan §5.3): when enabled, renders an

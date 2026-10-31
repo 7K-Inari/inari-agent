@@ -150,14 +150,14 @@ func TestStreamerConfiguredWatchesEnvtest(t *testing.T) {
 	}
 
 	// Watch config: native replacements with a DNSEndpoint label selector,
-	// plus the legacy platform watches whose CRDs are NOT installed here —
-	// the discovery filter must skip them without blocking the rest.
+	// plus watches for APIs NOT installed here — the discovery filter must
+	// skip them without blocking the rest.
 	watches := []WatchResource{
 		{GVR: clusterIssuerGVR},
 		{GVR: dnsEndpointGVR, LabelSelector: "inari.io/managed-by=inari"},
 		{GVR: appProjectGVR},
 	}
-	watches = append(watches, legacyPlatformWatches()...)
+	watches = append(watches, absentWatches()...)
 
 	sender := &captureSender{signal: make(chan struct{}, 16)}
 	s := NewStreamer(logr.Discard(), dyn, sender, "argocd", nil, watches)
@@ -187,7 +187,7 @@ func TestStreamerConfiguredWatchesEnvtest(t *testing.T) {
 
 	// Exactly three resources are watched: the ClusterIssuer, the labeled
 	// DNSEndpoint, and the AppProject. The unlabeled DNSEndpoint and the
-	// absent platform CRDs must not produce events.
+	// absent watched APIs must not produce events.
 	events := collect(3, 15*time.Second)
 	byKind := map[string]*agentv1.StatusUpdate{}
 	for _, upd := range events {

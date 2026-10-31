@@ -58,9 +58,10 @@ type GitOpsConfig struct {
 	InstanceGVRs []schema.GroupVersionResource
 
 	// StatusWatches are the cluster-wide platform-resource watches
-	// (legacy platform.inari.io CRDs plus native replacements — cert-manager
-	// ClusterIssuer, external-dns DNSEndpoint, argoproj AppProject/
-	// ApplicationSet, KRO tenantnamespace instances). Nil applies
+	// (the server-rendered platform resources, ADR-0017 — provider-keycloak
+	// TenantRealm/TenantClient claims, KRO tenantnamespace instances,
+	// cert-manager ClusterIssuer, external-dns DNSEndpoint, argoproj
+	// AppProject/ApplicationSet). Nil applies
 	// status.DefaultWatchResources(); INARI_STATUS_WATCHES overrides at
 	// the cmd layer.
 	StatusWatches []status.WatchResource

@@ -1,10 +1,10 @@
 // Configurable status watches (M5, operator-sunset risk #4): the set of
 // cluster-scoped resources whose conditions/health are streamed upstream
-// is configuration, not a hardcoded platform.inari.io list, so native
-// third-party resources (cert-manager ClusterIssuer, external-dns
-// DNSEndpoint, argoproj AppProject/ApplicationSet), KRO instances, and
-// addon apps keep feeding the Resources Inventory when the operator's
-// facade CRDs disappear.
+// is configuration, not a hardcoded list, so native third-party resources
+// (cert-manager ClusterIssuer, external-dns DNSEndpoint, argoproj
+// AppProject/ApplicationSet), KRO instances, Crossplane claims, and addon
+// apps feed the Resources Inventory. The operator's platform.inari.io
+// facade CRDs were removed in Phase 4 of the sunset (ADR-0017, D7).
 package status
 
 import (
@@ -26,25 +26,22 @@ type WatchResource struct {
 }
 
 // DefaultWatchResources returns the built-in watch list applied when
-// INARI_STATUS_WATCHES is unset: the legacy platform.inari.io CRDs
-// (dual-run until Phase 4 removes them) plus the native replacements
-// from the operator-sunset plan (§4.1). Addon apps surface through the
-// namespaced Application watch and the fleet ApplicationSet entry here.
-//
-// The KRO tenantnamespace instance GVR is deliberately absent: its
-// group/version/kind are generated from the RGD's spec.schema, so it is
-// supplied via INARI_STATUS_WATCHES once the RGD lands.
+// INARI_STATUS_WATCHES is unset: the platform resources the control plane
+// renders hub-side (operator sunset, ADR-0017) — provider-keycloak
+// TenantRealm/TenantClient claims, the KRO tenantnamespace instance
+// (stacks.inari.io, generated from the RGD's spec.schema), and the native
+// cert-manager/external-dns/argoproj resources. Addon apps surface through
+// the namespaced Application watch and the fleet ApplicationSet entry here.
 func DefaultWatchResources() []WatchResource {
-	out := make([]WatchResource, 0, len(PlatformGVRs)+4)
-	for _, gvr := range PlatformGVRs {
-		out = append(out, WatchResource{GVR: gvr})
+	return []WatchResource{
+		{GVR: schema.GroupVersionResource{Group: "identity.inari.io", Version: "v1alpha1", Resource: "tenantrealms"}},
+		{GVR: schema.GroupVersionResource{Group: "identity.inari.io", Version: "v1alpha1", Resource: "tenantclients"}},
+		{GVR: schema.GroupVersionResource{Group: "stacks.inari.io", Version: "v1alpha1", Resource: "tenantnamespaces"}},
+		{GVR: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}},
+		{GVR: schema.GroupVersionResource{Group: "externaldns.k8s.io", Version: "v1alpha1", Resource: "dnsendpoints"}},
+		{GVR: schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "appprojects"}},
+		{GVR: schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applicationsets"}},
 	}
-	return append(out,
-		WatchResource{GVR: schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}},
-		WatchResource{GVR: schema.GroupVersionResource{Group: "externaldns.k8s.io", Version: "v1alpha1", Resource: "dnsendpoints"}},
-		WatchResource{GVR: schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "appprojects"}},
-		WatchResource{GVR: schema.GroupVersionResource{Group: "argoproj.io", Version: "v1alpha1", Resource: "applicationsets"}},
-	)
 }
 
 // ParseWatchResources parses the INARI_STATUS_WATCHES value: a
@@ -96,9 +93,9 @@ func ParseWatchResources(in string) ([]WatchResource, error) {
 }
 
 // qualifiedKind is the ResourceRef kind for configured watch resources:
-// "<Kind>.<group>" (decision D-A), extending the platform.inari.io suffix
-// convention so the server can route native resources unambiguously.
-// Core-group kinds stay bare.
+// "<Kind>.<group>" (decision D-A) — the convention the platform.inari.io
+// CRDs used, generalized so the server can route native resources
+// unambiguously. Core-group kinds stay bare.
 func qualifiedKind(u *unstructured.Unstructured) string {
 	if group := u.GroupVersionKind().Group; group != "" {
 		return u.GetKind() + "." + group

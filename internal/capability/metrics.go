@@ -23,4 +23,14 @@ var (
 		Help:      "Number of capabilities per CapabilityUpdate event (burst coalescing).",
 		Buckets:   []float64{1, 2, 5, 10, 25, 64, 128, 256},
 	})
+
+	// Chunk bytes make the payload ceiling observable before it bites:
+	// chunks approaching the byte budget signal schema growth on the cluster.
+	capabilityUpdateChunkBytes = promauto.With(metrics.Registry).NewHistogram(prometheus.HistogramOpts{
+		Namespace: "inari_agent",
+		Subsystem: "capability",
+		Name:      "update_chunk_bytes",
+		Help:      "Summed proto size of capabilities per CapabilityUpdate event (byte-bounded chunking).",
+		Buckets:   prometheus.ExponentialBuckets(1024, 4, 6), // 1KiB … 4MiB
+	})
 )

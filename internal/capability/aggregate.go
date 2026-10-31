@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -14,6 +15,39 @@ import (
 
 	"github.com/7K-Inari/inari-agent/internal/stream"
 )
+
+// DefaultMaxBatchBytes bounds one CapabilityUpdate's summed proto size.
+// 2MiB stays comfortably under connect's stock 4MiB per-message read limit
+// (with envelope/Any headroom), so capability traffic no longer depends on
+// the gateway's raised read limit to be admitted.
+const DefaultMaxBatchBytes = 2 << 20
+
+// splitByByteBudget splits caps into chunks whose summed proto size stays
+// within maxBytes. A capability larger than maxBytes gets its own chunk — it
+// cannot be split further, and the gateway limit leaves headroom for one
+// oversize member.
+func splitByByteBudget(caps []*agentv1.Capability, maxBytes int) [][]*agentv1.Capability {
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxBatchBytes
+	}
+	var chunks [][]*agentv1.Capability
+	var cur []*agentv1.Capability
+	curBytes := 0
+	for _, c := range caps {
+		sz := proto.Size(c)
+		if len(cur) > 0 && curBytes+sz > maxBytes {
+			chunks = append(chunks, cur)
+			cur = nil
+			curBytes = 0
+		}
+		cur = append(cur, c)
+		curBytes += sz
+	}
+	if len(cur) > 0 {
+		chunks = append(chunks, cur)
+	}
+	return chunks
+}
 
 // Aggregator fans watcher events in, maintains the full capability snapshot
 // (the source of truth for the state checksum and resync replays), and
@@ -30,6 +64,13 @@ type Aggregator struct {
 	// clusters per-event sends keep the send path saturated (issue #28).
 	BatchWindow time.Duration
 	MaxBatch    int
+	// MaxBatchBytes caps the summed proto size of one CapabilityUpdate
+	// (default DefaultMaxBatchBytes). Full-sync replays and coalesced bursts
+	// are split into byte-bounded chunks so no stream message can exceed the
+	// gateway's per-message read limit on CRD-rich clusters (capability
+	// stream payload sizing fix — the 64MiB read-limit stopgap was not the
+	// end-state).
+	MaxBatchBytes int
 
 	mu       sync.Mutex
 	snapshot map[string]*agentv1.Capability
@@ -169,6 +210,12 @@ func (a *Aggregator) apply(cap *agentv1.Capability) {
 // the lifecycle when the gateway requests resync (checksum mismatch or
 // sequence gap, plan §5.2); the gateway dedupes by checksum, so replays
 // produce no duplicates in the catalog projection.
+//
+// The replay is chunked to MaxBatchBytes (a CRD-rich snapshot exceeds any
+// per-message read limit when sent whole) and ends with an EMPTY full-sync
+// terminal chunk: the gateway finalizes the sync (delete-missing, checksum)
+// only on the terminal chunk, so an abandoned replay never deletes live
+// capabilities.
 func (a *Aggregator) ReplayFullState(ctx context.Context) error {
 	a.mu.Lock()
 	caps := make([]*agentv1.Capability, 0, len(a.snapshot))
@@ -176,17 +223,33 @@ func (a *Aggregator) ReplayFullState(ctx context.Context) error {
 		caps = append(caps, c)
 	}
 	a.mu.Unlock()
-	return a.send(ctx, caps, true)
+	checksum := a.Checksum()
+	for _, chunk := range splitByByteBudget(caps, a.MaxBatchBytes) {
+		if err := a.sendChunk(ctx, chunk, true, checksum); err != nil {
+			return err
+		}
+	}
+	return a.sendChunk(ctx, nil, true, checksum)
 }
 
 func (a *Aggregator) send(ctx context.Context, caps []*agentv1.Capability, fullSync bool) error {
 	if a.Client == nil || len(caps) == 0 && !fullSync {
 		return nil
 	}
+	checksum := a.Checksum()
+	for _, chunk := range splitByByteBudget(caps, a.MaxBatchBytes) {
+		if err := a.sendChunk(ctx, chunk, fullSync, checksum); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *Aggregator) sendChunk(ctx context.Context, caps []*agentv1.Capability, fullSync bool, checksum string) error {
 	payload, err := anypb.New(&agentv1.CapabilityUpdate{
 		FullSync:      fullSync,
 		Capabilities:  caps,
-		StateChecksum: a.Checksum(),
+		StateChecksum: checksum,
 	})
 	if err != nil {
 		return fmt.Errorf("aggregator: marshal capability update: %w", err)
@@ -197,6 +260,11 @@ func (a *Aggregator) send(ctx context.Context, caps []*agentv1.Capability, fullS
 	}
 	capabilityUpdatesTotal.WithLabelValues(syncKind).Inc()
 	capabilityUpdateBatchSize.Observe(float64(len(caps)))
+	chunkBytes := 0
+	for _, c := range caps {
+		chunkBytes += proto.Size(c)
+	}
+	capabilityUpdateChunkBytes.Observe(float64(chunkBytes))
 	return a.Client.Send(ctx, &agentv1.Event{
 		EventId:    fmt.Sprintf("cap-%s-%d", a.ClusterID, timestamppb.Now().AsTime().UnixNano()),
 		ResourceId: a.ClusterID,

@@ -3,11 +3,14 @@ package capability
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	agentv1 "github.com/7K-Inari/inari-api/gen/go/inari/agent/v1"
 )
@@ -115,16 +118,28 @@ func TestAggregatorReplaysFullSnapshotOnResyncWithoutDuplicates(t *testing.T) {
 	waitForCapabilities(t, client, 4)
 
 	updates := capabilityUpdates(t, client.sentEvents())
-	full := updates[len(updates)-1]
-	if !full.FullSync {
-		t.Fatal("resync replay must be a full sync")
+	var fullSyncs []*agentv1.CapabilityUpdate
+	for _, u := range updates {
+		if u.FullSync {
+			fullSyncs = append(fullSyncs, u)
+		}
+	}
+	if len(fullSyncs) == 0 {
+		t.Fatal("resync replay must send full-sync events")
 	}
 	names := map[string]int{}
-	for _, c := range full.Capabilities {
-		names[c.Name]++
+	for _, u := range fullSyncs {
+		for _, c := range u.Capabilities {
+			names[c.Name]++
+		}
 	}
-	if len(full.Capabilities) != 2 || names["a"] != 1 || names["b"] != 1 {
-		t.Errorf("full sync must contain each capability exactly once, got %v", names)
+	if names["a"] != 1 || names["b"] != 1 {
+		t.Errorf("full sync must replay each capability exactly once across chunks, got %v", names)
+	}
+	// The replay ends with an empty terminal chunk (the gateway's finalize
+	// signal).
+	if last := fullSyncs[len(fullSyncs)-1]; len(last.Capabilities) != 0 {
+		t.Errorf("last full-sync event must be the empty terminal chunk, got %d capabilities", len(last.Capabilities))
 	}
 }
 
@@ -266,4 +281,164 @@ func waitForSent(t *testing.T, client *fakeStreamClient, n int) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %d sent events", n)
+}
+
+func paddedCapability(t *testing.T, name string, pad int) *agentv1.Capability {
+	t.Helper()
+	s, err := structpb.NewStruct(map[string]interface{}{"pad": strings.Repeat("x", pad)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &agentv1.Capability{
+		Kind: agentv1.CapabilityKind_CAPABILITY_KIND_CRD,
+		Name: name, Group: "example.com", Version: "v1", Schema: s,
+	}
+}
+
+func chunkBytes(chunk []*agentv1.Capability) int {
+	total := 0
+	for _, c := range chunk {
+		total += proto.Size(c)
+	}
+	return total
+}
+
+func TestSplitByByteBudget(t *testing.T) {
+	caps := []*agentv1.Capability{
+		paddedCapability(t, "a", 900), paddedCapability(t, "b", 900), paddedCapability(t, "c", 900),
+	}
+	chunks := splitByByteBudget(caps, 2000)
+	if len(chunks) != 2 {
+		t.Fatalf("chunks = %d, want 2 (a+b | c)", len(chunks))
+	}
+	if len(chunks[0]) != 2 || len(chunks[1]) != 1 {
+		t.Fatalf("chunk sizes = %d/%d, want 2/1", len(chunks[0]), len(chunks[1]))
+	}
+	for i, ch := range chunks {
+		if b := chunkBytes(ch); b > 2000 {
+			t.Errorf("chunk %d = %d bytes, over the 2000 budget", i, b)
+		}
+	}
+
+	// A capability larger than the budget cannot be split: it gets its own
+	// chunk (the gateway limit leaves headroom for one oversize member).
+	small := paddedCapability(t, "small", 10)
+	huge := paddedCapability(t, "huge", 5000)
+	chunks = splitByByteBudget([]*agentv1.Capability{small, huge, small}, 2000)
+	if len(chunks) != 3 || len(chunks[1]) != 1 || chunks[1][0].Name != "huge" {
+		t.Fatalf("oversize member must get its own chunk, got %d chunks", len(chunks))
+	}
+
+	if got := splitByByteBudget(nil, 2000); len(got) != 0 {
+		t.Fatalf("nil input must produce no chunks, got %d", len(got))
+	}
+}
+
+func TestAggregatorBatchesRespectByteBudget(t *testing.T) {
+	w := &fakeWatcher{source: SourceCRD, ch: make(chan *agentv1.Capability, 6)}
+	client := &fakeStreamClient{events: make(chan *agentv1.Event, 1)}
+	agg := NewAggregator("tenant-1", "cluster-1", client, []Watcher{w})
+	agg.MaxBatchBytes = 2500
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = agg.Run(ctx) }()
+
+	for i := 0; i < 6; i++ {
+		w.ch <- paddedCapability(t, fmt.Sprintf("crd-%d", i), 900)
+	}
+	waitForCapabilities(t, client, 6)
+
+	updates := capabilityUpdates(t, client.sentEvents())
+	if len(updates) < 2 {
+		t.Fatalf("6x~1KiB capabilities under a 2500-byte budget must split, got %d update(s)", len(updates))
+	}
+	for i, u := range updates {
+		if b := chunkBytes(u.Capabilities); b > 2500 {
+			t.Errorf("update %d = %d bytes, over the 2500 budget", i, b)
+		}
+		if u.StateChecksum != agg.Checksum() {
+			t.Errorf("update %d checksum must match the post-batch snapshot", i)
+		}
+	}
+}
+
+func TestAggregatorReplayFullStateChunksAndTerminates(t *testing.T) {
+	w := &fakeWatcher{source: SourceCRD, ch: make(chan *agentv1.Capability, 6)}
+	client := &fakeStreamClient{events: make(chan *agentv1.Event, 1)}
+	agg := NewAggregator("tenant-1", "cluster-1", client, []Watcher{w})
+	agg.MaxBatchBytes = 2500
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = agg.Run(ctx) }()
+
+	names := map[string]bool{}
+	for i := 0; i < 6; i++ {
+		name := fmt.Sprintf("crd-%d", i)
+		names[name] = true
+		w.ch <- paddedCapability(t, name, 900)
+	}
+	waitForCapabilities(t, client, 6)
+
+	if err := agg.ReplayFullState(ctx); err != nil {
+		t.Fatalf("ReplayFullState: %v", err)
+	}
+
+	var full []*agentv1.CapabilityUpdate
+	for _, u := range capabilityUpdates(t, client.sentEvents()) {
+		if u.FullSync {
+			full = append(full, u)
+		}
+	}
+	if len(full) < 3 {
+		t.Fatalf("6x~1KiB snapshot under a 2500-byte budget wants >= 3 data chunks + terminal, got %d full-sync events", len(full))
+	}
+	seen := map[string]int{}
+	for i, u := range full {
+		if u.StateChecksum != agg.Checksum() {
+			t.Errorf("full-sync event %d checksum must match the snapshot", i)
+		}
+		if b := chunkBytes(u.Capabilities); b > 2500 {
+			t.Errorf("full-sync chunk %d = %d bytes, over the 2500 budget", i, b)
+		}
+		for _, c := range u.Capabilities {
+			seen[c.Name]++
+		}
+	}
+	// Terminal chunk: empty, full-sync — the gateway's finalize signal.
+	terminal := full[len(full)-1]
+	if len(terminal.Capabilities) != 0 {
+		t.Fatalf("last full-sync event must be the empty terminal chunk, got %d capabilities", len(terminal.Capabilities))
+	}
+	for _, u := range full[:len(full)-1] {
+		if len(u.Capabilities) == 0 {
+			t.Error("only the terminal chunk may be empty")
+		}
+	}
+	for name := range names {
+		if seen[name] != 1 {
+			t.Errorf("capability %s replayed %d times, want exactly 1", name, seen[name])
+		}
+	}
+}
+
+func TestAggregatorReplayFullStateEmptySnapshotSendsTerminalChunk(t *testing.T) {
+	client := &fakeStreamClient{events: make(chan *agentv1.Event)}
+	agg := NewAggregator("tenant-1", "cluster-1", client, nil)
+
+	if err := agg.ReplayFullState(context.Background()); err != nil {
+		t.Fatalf("ReplayFullState: %v", err)
+	}
+	events := client.sentEvents()
+	if len(events) != 1 {
+		t.Fatalf("empty snapshot replay must send exactly the terminal chunk, got %d events", len(events))
+	}
+	updates := capabilityUpdates(t, events)
+	if len(updates) != 1 || !updates[0].FullSync || len(updates[0].Capabilities) != 0 {
+		t.Fatalf("want one empty full-sync terminal chunk, got %+v", updates)
+	}
+	if updates[0].StateChecksum != StateChecksum(nil) {
+		t.Errorf("terminal checksum must be the empty-state checksum")
+	}
 }
