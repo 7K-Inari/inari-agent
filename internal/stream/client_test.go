@@ -23,6 +23,26 @@ import (
 	"github.com/7K-Inari/inari-api/gen/go/inari/agent/v1/agentv1connect"
 )
 
+// lockedBuffer is a thread-safe sink for capturing slog output from the
+// client's goroutines — a bare bytes.Buffer races the logger against the
+// test's polling reads under -race.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 type staticToken string
 
 func (s staticToken) Token(context.Context) (string, error) { return string(s), nil }
@@ -250,7 +270,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 func TestDesiredAgentVersionMismatchLogsWarning(t *testing.T) {
 	gw := &fakeGateway{desiredVersion: "0.5.1"}
-	var logBuf bytes.Buffer
+	var logBuf lockedBuffer
 	c := newTestClient(t, gw, func(c *ConnectClient) {
 		c.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 	})
@@ -268,7 +288,7 @@ func TestDesiredAgentVersionMismatchLogsWarning(t *testing.T) {
 
 func TestDesiredAgentVersionMatchLogsNoWarning(t *testing.T) {
 	gw := &fakeGateway{desiredVersion: "0.1.0-test"} // matches newTestClient's AgentVersion
-	var logBuf bytes.Buffer
+	var logBuf lockedBuffer
 	c := newTestClient(t, gw, func(c *ConnectClient) {
 		c.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 	})
