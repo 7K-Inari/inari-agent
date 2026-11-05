@@ -459,7 +459,7 @@ type disconnectingClient struct {
 	// disconnectAfter flips connected to false after this many sends
 	// (<=0: immediately disconnected).
 	disconnectAfter int
-	sends         int
+	sends           int
 }
 
 func (d *disconnectingClient) Connected() bool { return d.connected }
