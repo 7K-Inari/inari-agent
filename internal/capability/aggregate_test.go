@@ -450,3 +450,66 @@ func TestAggregatorReplayFullStateEmptySnapshotSendsTerminalChunk(t *testing.T) 
 		t.Errorf("terminal checksum must be the empty-state checksum")
 	}
 }
+
+// disconnectingClient reports Connected per its flag, so replays can be
+// aborted mid-flight (framed replays are session-scoped).
+type disconnectingClient struct {
+	fakeStreamClient
+	connected bool
+	// disconnectAfter flips connected to false after this many sends
+	// (<=0: immediately disconnected).
+	disconnectAfter int
+	sends         int
+}
+
+func (d *disconnectingClient) Connected() bool { return d.connected }
+func (d *disconnectingClient) Send(ctx context.Context, ev *agentv1.Event) error {
+	d.sends++
+	if d.sends > d.disconnectAfter {
+		d.connected = false
+	}
+	return d.fakeStreamClient.Send(ctx, ev)
+}
+
+// A replay that starts while the stream is down must abort without
+// emitting any chunk: framed replays are session-scoped, and their chunks
+// are only meaningful to the session that requested them.
+func TestReplayFullStateAbortsWhileDisconnected(t *testing.T) {
+	client := &disconnectingClient{connected: false}
+	agg := NewAggregator("tenant-1", "cluster-1", client, nil)
+	agg.apply(paddedCapability(t, "a", 100))
+
+	if err := agg.ReplayFullState(context.Background()); err == nil {
+		t.Fatal("replay must abort while the stream is disconnected")
+	}
+	if n := len(client.sentEvents()); n != 0 {
+		t.Fatalf("disconnected replay must not emit chunks, sent %d", n)
+	}
+}
+
+// A replay whose session dies mid-flight must abort before its tail
+// (remaining chunks + the terminal) lands on the NEXT session's queue,
+// where the terminal would finalize a partial keep set server-side.
+func TestReplayFullStateAbortsOnMidReplayDisconnect(t *testing.T) {
+	client := &disconnectingClient{connected: true, disconnectAfter: 1}
+	agg := NewAggregator("tenant-1", "cluster-1", client, nil)
+	agg.MaxBatchBytes = 2500
+	for i := 0; i < 4; i++ {
+		agg.apply(paddedCapability(t, fmt.Sprintf("crd-%d", i), 900))
+	}
+
+	if err := agg.ReplayFullState(context.Background()); err == nil {
+		t.Fatal("replay must abort when the session dies mid-replay")
+	}
+	// Exactly the chunks sent before the disconnect; crucially NO terminal
+	// chunk (empty full-sync update) was emitted after it.
+	for _, ev := range client.sentEvents() {
+		var upd agentv1.CapabilityUpdate
+		if err := ev.Payload.UnmarshalTo(&upd); err != nil {
+			t.Fatal(err)
+		}
+		if upd.FullSync && len(upd.Capabilities) == 0 {
+			t.Fatal("terminal chunk must not be emitted after a mid-replay disconnect")
+		}
+	}
+}

@@ -320,6 +320,15 @@ func (c *ConnectClient) session(ctx context.Context) error {
 		return err
 	}
 
+	// Capability syncs are framed per session: chunks queued by a dead
+	// session must NOT flush onto this one — a partial replay's terminal
+	// chunk would finalize with a partial keep set and mass-delete live
+	// capabilities server-side (chunked capability sync QA). Dropped
+	// capability traffic self-heals: the handshake checksum mismatch
+	// triggers a fresh resync replay. Other queued events (command acks,
+	// status updates, addon reports) survive.
+	c.purgeQueuedCapabilityUpdates()
+
 	// Handshake: first message on every (re)connect carries the last known
 	// state checksum.
 	hsPayload, err := anypb.New(&agentv1.HandshakeRequest{
@@ -481,6 +490,33 @@ func (c *ConnectClient) session(ctx context.Context) error {
 			deadman.Reset(recvTimeout)
 		case <-deadman.C:
 			return errDeadman
+		}
+	}
+}
+
+// purgeQueuedCapabilityUpdates drops queued capability-update events while
+// preserving every other queued event's order. Runs at session start only.
+func (c *ConnectClient) purgeQueuedCapabilityUpdates() {
+	c.mu.Lock()
+	ch := c.sendCh
+	c.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	capType := agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_CAPABILITY_UPDATE)
+	var kept []*agentv1.Event
+	for {
+		select {
+		case ev := <-ch:
+			if ev == nil || ev.Type != capType {
+				kept = append(kept, ev)
+			}
+		default:
+			for _, ev := range kept {
+				ch <- ev // len(kept) <= cap(ch): never blocks
+			}
+			streamSendQueueDepth.Set(float64(len(ch)))
+			return
 		}
 	}
 }

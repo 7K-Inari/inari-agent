@@ -2,6 +2,7 @@ package capability
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -225,11 +226,33 @@ func (a *Aggregator) ReplayFullState(ctx context.Context) error {
 	a.mu.Unlock()
 	checksum := a.Checksum()
 	for _, chunk := range splitByByteBudget(caps, a.MaxBatchBytes) {
+		// Framed replays are session-scoped: a replay that outlives its
+		// session must abort instead of flushing its tail (partial chunks +
+		// terminal) onto the next session, where the terminal would finalize
+		// a partial keep set. The client purges queued capability events at
+		// session start, and the next handshake's checksum mismatch requests
+		// a fresh replay.
+		if !a.streamConnected() {
+			return errors.New("aggregator: replay aborted: stream disconnected")
+		}
 		if err := a.sendChunk(ctx, chunk, true, checksum); err != nil {
 			return err
 		}
 	}
+	if !a.streamConnected() {
+		return errors.New("aggregator: replay aborted: stream disconnected")
+	}
 	return a.sendChunk(ctx, nil, true, checksum)
+}
+
+// streamConnected reports whether the stream is up when the client exposes
+// liveness (the real ConnectClient does via Connected; test fakes that
+// don't are treated as connected).
+func (a *Aggregator) streamConnected() bool {
+	if c, ok := a.Client.(interface{ Connected() bool }); ok {
+		return c.Connected()
+	}
+	return true
 }
 
 // send streams one incremental (non-full-sync) batch, byte-chunked. The

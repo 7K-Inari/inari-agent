@@ -560,3 +560,60 @@ func TestOAuth2TokenSourceCachesTokens(t *testing.T) {
 		t.Errorf("token endpoint hit %d times for 3 Token() calls; want 1 (cached)", got)
 	}
 }
+
+// Framed capability syncs are session-scoped: chunks queued while the
+// stream is down must NOT flush onto the next session — a partial replay's
+// terminal chunk would finalize a partial keep set server-side and
+// mass-delete live capabilities. Other queued events (acks, status,
+// reports) survive the purge.
+func TestCapabilityUpdatesQueuedWhileDisconnectedArePurgedOnReconnect(t *testing.T) {
+	gw := &fakeGateway{closeFirstAfter: 80 * time.Millisecond}
+	c := newTestClient(t, gw, func(c *ConnectClient) {
+		// Slow, steady backoff: a wide window to queue events while down.
+		c.Backoff = Backoff{InitialInterval: 300 * time.Millisecond, MaxInterval: 300 * time.Millisecond, Multiplier: 2}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	waitFor(t, "first connect", func() bool { return c.Connected() })
+	waitFor(t, "first session drop", func() bool { return !c.Connected() })
+
+	capPayload, _ := anypb.New(&agentv1.CapabilityUpdate{FullSync: true, StateChecksum: "sum-stale"})
+	for _, id := range []string{"stale-chunk-1", "stale-chunk-2", "stale-terminal"} {
+		if err := c.Send(ctx, &agentv1.Event{
+			EventId: id,
+			Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_CAPABILITY_UPDATE),
+			Payload: capPayload,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ackPayload, _ := anypb.New(&agentv1.CommandAck{CommandId: "cmd-1"})
+	if err := c.Send(ctx, &agentv1.Event{
+		EventId: "queued-ack",
+		Type:    agentv1.EventTypeString(agentv1.EventType_EVENT_TYPE_COMMAND_ACK),
+		Payload: ackPayload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, "reconnect", func() bool { return gw.connectCount() >= 2 })
+	// Give the send pump room to flush whatever survived the purge.
+	time.Sleep(250 * time.Millisecond)
+
+	for _, ev := range gw.received() {
+		if strings.HasPrefix(ev.EventId, "stale-") {
+			t.Errorf("stale capability chunk %q flushed onto the new session", ev.EventId)
+		}
+	}
+	var ackSeen bool
+	for _, ev := range gw.received() {
+		if ev.EventId == "queued-ack" {
+			ackSeen = true
+		}
+	}
+	if !ackSeen {
+		t.Error("non-capability events queued while disconnected must survive the purge")
+	}
+}
