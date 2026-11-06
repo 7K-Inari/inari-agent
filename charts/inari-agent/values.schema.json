@@ -7,6 +7,20 @@
       "type": "string",
       "minLength": 1
     },
+    "namespaceCreate": {
+      "type": "boolean"
+    },
+    "discovery": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
     "image": {
       "type": "object",
       "properties": {
