@@ -1,4 +1,10 @@
 namespace: inari-system
+# Render the Namespace object itself (default true). Set false when the
+# namespace is pre-provisioned out of band (e.g. GitOps-managed alongside
+# runner RBAC) — the chart then never touches namespace lifecycle, and a
+# pre-existing namespace without helm ownership metadata is no longer a
+# conflict.
+namespaceCreate: true
 
 image:
   repository: ghcr.io/7k-inari/inari-agent
@@ -36,6 +42,14 @@ resources:
 
 serviceAccount:
   name: inari-agent
+
+# Discovery watch RBAC (clusterrole.yaml + clusterrolebinding.yaml). The
+# ClusterRole/ClusterRoleBinding names are cluster-global and FIXED by
+# default; when two agents share one cluster (e.g. an e2e agent beside the
+# live platform-cluster agent) the second install MUST override name, or
+# both releases fight over the same objects.
+discovery:
+  name: inari-agent-discovery
 
 # Lifecycle configuration (plan §5.3). registrationToken is the one-time
 # TTL'd bootstrap token issued by the control plane; leave empty for

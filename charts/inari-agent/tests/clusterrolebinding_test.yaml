@@ -1,0 +1,31 @@
+suite: discovery ClusterRoleBinding naming (shared-cluster coexistence)
+# Binding half of the discovery.name contract (see discovery-rbac_test.yaml).
+templates:
+  - clusterrolebinding.yaml
+tests:
+  - it: binds inari-agent-discovery into the agent namespace by default
+    asserts:
+      - equal:
+          path: metadata.name
+          value: inari-agent-discovery
+      - equal:
+          path: roleRef.name
+          value: inari-agent-discovery
+      - equal:
+          path: subjects[0].namespace
+          value: inari-system
+  - it: honors discovery.name + a custom namespace (e2e beside live)
+    set:
+      namespace: inari-e2e-agent
+      discovery:
+        name: inari-agent-e2e-discovery
+    asserts:
+      - equal:
+          path: metadata.name
+          value: inari-agent-e2e-discovery
+      - equal:
+          path: roleRef.name
+          value: inari-agent-e2e-discovery
+      - equal:
+          path: subjects[0].namespace
+          value: inari-e2e-agent

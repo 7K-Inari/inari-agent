@@ -1,0 +1,22 @@
+suite: discovery RBAC naming (shared-cluster coexistence)
+# The discovery ClusterRole/ClusterRoleBinding names are cluster-global and
+# FIXED by default — a second agent on the same cluster (e.g. the e2e agent
+# beside the live platform-cluster agent) must rename them or the two
+# installs fight over the same objects. The binding half of the contract
+# lives in clusterrolebinding_test.yaml.
+templates:
+  - clusterrole.yaml
+tests:
+  - it: names the discovery ClusterRole inari-agent-discovery by default (live-agent parity)
+    asserts:
+      - equal:
+          path: metadata.name
+          value: inari-agent-discovery
+  - it: honors discovery.name when two agents share one cluster (e2e beside live)
+    set:
+      discovery:
+        name: inari-agent-e2e-discovery
+    asserts:
+      - equal:
+          path: metadata.name
+          value: inari-agent-e2e-discovery
