@@ -81,8 +81,36 @@ jobs:
             ${{ env.IMAGE }}:edge
             ${{ env.IMAGE }}:${{ needs.version.outputs.edge }}
 
+  chart:
+    # Publish the chart at the same per-commit edge version (semver
+    # prerelease, e.g. 0.5.2-a1b2c3d) — edge publishes the IMAGE on every
+    # main merge but historically never the CHART, so chart-level changes
+    # (e.g. the discovery.name/namespaceCreate knobs, #88) had to wait for a
+    # stable release to be consumable from oci://ghcr.io/7k-inari/charts.
+    # Same registry-login pattern as release.yml; packages:write is already
+    # on the workflow. Release merges are skipped upstream by the gate job.
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      EDGE: ${{ needs.version.outputs.edge }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: v4.3.1
+      - name: Package and push the edge chart (OCI)
+        run: |
+          set -euo pipefail
+          # Chart version: unprefixed semver (helm); appVersion: the
+          # v-prefixed edge image tag (release.yml convention).
+          sed -i "s/^version:.*/version: ${EDGE}/" charts/inari-agent/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"v${EDGE}\"/" charts/inari-agent/Chart.yaml
+          helm package charts/inari-agent -d dist
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "dist/inari-agent-${EDGE}.tgz" oci://ghcr.io/7k-inari/charts
+
   prerelease:
-    needs: [version, edge-image]
+    needs: [version, edge-image, chart]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -99,7 +127,7 @@ jobs:
               --prerelease \
               --target "$GITHUB_SHA" \
               --title "edge ${EDGE}" \
-              --notes "Edge build from ${GITHUB_SHA}. Image: \`${{ env.IMAGE }}:${EDGE}\` (also \`:edge\`, \`:edge-${GITHUB_SHA}\`). Superseded by the next stable vX.Y.Z release."
+              --notes "Edge build from ${GITHUB_SHA}. Image: \`${{ env.IMAGE }}:${EDGE}\` (also \`:edge\`, \`:edge-${GITHUB_SHA}\`). Chart: \`oci://ghcr.io/7k-inari/charts/inari-agent:${EDGE}\`. Superseded by the next stable vX.Y.Z release."
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
