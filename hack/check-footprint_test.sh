@@ -48,7 +48,7 @@ spec:
           resources:
             limits:
               cpu: 100m
-              memory: 128Mi
+              memory: 512Mi
 EOF
 
 cat > "$TMP/over_budget.yaml" <<'EOF'
@@ -62,7 +62,7 @@ spec:
           resources:
             limits:
               cpu: 200m
-              memory: 256Mi
+              memory: 1Gi
 EOF
 
 cat > "$TMP/no_limits.yaml" <<'EOF'

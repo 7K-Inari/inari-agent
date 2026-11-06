@@ -2,7 +2,11 @@
 # Footprint budget guard (plan §5.3, §12.1/4).
 #
 # Budgets:
-#   - Deployment container limits MUST NOT exceed 100m CPU / 128Mi memory.
+#   - Deployment container limits MUST NOT exceed 100m CPU / 512Mi memory.
+#     Memory raised 128→512 after measured cgroup OOMs on CRD-heavy
+#     clusters: the capability watchers' initial LIST drives RSS ~1.3MB/s
+#     straight through a 128Mi ceiling (inari-release-bundle e2e round-11,
+#     PR #138). Requests move 64→128Mi to match the proven-stable floor.
 #   - Agent image MUST NOT exceed 100MB as reported by `docker image inspect
 #     .Size` (sum of uncompressed layers). Raised 50→100 with the kubectl
 #     tunnel relay (plan §8): the same image carries TWO stripped static Go
@@ -21,7 +25,7 @@ set -euo pipefail
 MANIFEST="dist/install.yaml"
 IMAGE=""
 MAX_CPU_MILLICORES=100
-MAX_MEMORY_MIB=128
+MAX_MEMORY_MIB=512
 MAX_IMAGE_MB=100
 
 while [[ $# -gt 0 ]]; do

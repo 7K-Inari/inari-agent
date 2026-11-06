@@ -55,7 +55,7 @@ cosign verify ghcr.io/7k-inari/inari-agent:v0.1.0 \
 
 ## Footprint budget
 
-The agent must fit starter-tier nodes: **≤ 100m CPU / 128Mi memory** limits and an image ≤ 50MB, enforced in CI by `hack/check-footprint.sh` (plan §12.1/4).
+The agent must fit starter-tier nodes: **≤ 100m CPU / 512Mi memory** limits and an image ≤ 100MB, enforced in CI by `hack/check-footprint.sh` (plan §12.1/4).
 
 ## Development
 

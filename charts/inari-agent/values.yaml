@@ -35,10 +35,10 @@ pdb:
 resources:
   requests:
     cpu: 50m
-    memory: 64Mi
+    memory: 128Mi
   limits:
     cpu: 100m
-    memory: 128Mi
+    memory: 512Mi
 
 serviceAccount:
   name: inari-agent
@@ -109,7 +109,7 @@ registrationReset: false
 # apiserver via hub-minted Impersonate-* headers. Runs as a dedicated
 # binary/Deployment with its own ServiceAccount holding ONLY the
 # impersonate verb — never merged into the inari-agent SA. Footprint is
-# deliberately small: it is a thin byte relay (the 100m/128Mi CI guard
+# deliberately small: it is a thin byte relay (the 100m/512Mi CI guard
 # applies per Deployment).
 kubectlTunnel:
   enabled: true
