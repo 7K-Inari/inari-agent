@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -42,6 +43,10 @@ type AgentReconciler struct {
 	// BootstrapToken is the one-time TTL'd registration token from the
 	// install manifest. It is cleared after the exchange.
 	BootstrapToken string
+
+	// SystemNamespace overrides where the registration ConfigMap lives.
+	// Zero value: POD_NAMESPACE env (chart downward API), else inari-system.
+	SystemNamespace string
 
 	Registrar    registration.Registrar
 	SecretReader registration.SecretReader
@@ -227,13 +232,32 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 // without re-consuming the one-time bootstrap token.
 const registrationConfigMap = "inari-agent-registration"
 
+// defaultSystemNamespace keeps manifest-based installs (config/default) and
+// pre-namespace-knob chart releases working: they run in inari-system.
+const defaultSystemNamespace = "inari-system"
+
+// systemNamespace is where the registration ConfigMap lives: the explicit
+// SystemNamespace field, else the pod's own namespace (POD_NAMESPACE, set by
+// the chart via the downward API), else the historical default. Shared-cluster
+// installs (e.g. the e2e agent on the platform cluster) MUST NOT touch
+// inari-system — it belongs to the platform's own agent.
+func (r *AgentReconciler) systemNamespace() string {
+	if r.SystemNamespace != "" {
+		return r.SystemNamespace
+	}
+	if ns := os.Getenv("POD_NAMESPACE"); ns != "" {
+		return ns
+	}
+	return defaultSystemNamespace
+}
+
 // loadPersistedCredentials returns previously persisted credentials, or nil
 // when the agent has never completed registration.
 func (r *AgentReconciler) loadPersistedCredentials(ctx context.Context) (*registration.Credentials, error) {
 	if r.Kube == nil {
 		return nil, nil
 	}
-	cm, err := r.Kube.CoreV1().ConfigMaps("inari-system").Get(ctx, registrationConfigMap, metav1.GetOptions{})
+	cm, err := r.Kube.CoreV1().ConfigMaps(r.systemNamespace()).Get(ctx, registrationConfigMap, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}
@@ -267,7 +291,7 @@ func (r *AgentReconciler) persistCredentials(ctx context.Context, creds *registr
 		return nil
 	}
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: registrationConfigMap, Namespace: "inari-system"},
+		ObjectMeta: metav1.ObjectMeta{Name: registrationConfigMap, Namespace: r.systemNamespace()},
 		Data: map[string]string{
 			"tenant-id":        creds.TenantID,
 			"cluster-id":       creds.ClusterID,
@@ -281,7 +305,7 @@ func (r *AgentReconciler) persistCredentials(ctx context.Context, creds *registr
 			"baseline-repo":    creds.BaselineRepo,
 		},
 	}
-	_, err := r.Kube.CoreV1().ConfigMaps("inari-system").Create(ctx, cm, metav1.CreateOptions{})
+	_, err := r.Kube.CoreV1().ConfigMaps(r.systemNamespace()).Create(ctx, cm, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		return nil
 	}

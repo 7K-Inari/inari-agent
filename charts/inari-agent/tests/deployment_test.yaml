@@ -16,6 +16,15 @@ tests:
           path: spec.template.spec.affinity
       - notExists:
           path: spec.template.spec.topologySpreadConstraints
+  - it: injects POD_NAMESPACE via the downward API (registration CM locality)
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
   - it: passes --leader-elect when leaderElection is enabled
     set:
       leaderElection:
