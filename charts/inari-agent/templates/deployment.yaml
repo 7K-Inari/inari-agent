@@ -53,6 +53,13 @@ spec:
             - --leader-elect
             {{- end }}
           env:
+            # Downward API: the agent persists its registration ConfigMap in
+            # its OWN namespace (shared-cluster installs must not touch
+            # inari-system — that belongs to the platform's agent).
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: INARI_REGISTRATION_TOKEN
               value: {{ .Values.config.registrationToken | quote }}
             - name: INARI_TENANT_ID

@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/structpb"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -663,4 +664,50 @@ func TestLifecycleFailsCommandsClosedUntilStreamConnects(t *testing.T) {
 		}
 		return false
 	})
+}
+
+func TestPersistAndLoadUsePodNamespace(t *testing.T) {
+	// Shared-cluster installs (e.g. the e2e agent on the platform cluster)
+	// must persist registration state in their OWN namespace — inari-system
+	// belongs to the platform's agent.
+	t.Setenv("POD_NAMESPACE", "inari-e2e-agent")
+	r := &AgentReconciler{
+		Log:  logr.Discard(),
+		Kube: k8sfake.NewSimpleClientset(),
+	}
+	creds := &registration.Credentials{
+		TenantID:  "tenant-1",
+		ClusterID: "cluster-1",
+		ClientID:  "cluster-cluster-1",
+		TokenURL:  "https://keycloak/token",
+		SecretRef: registration.SecretReference{Name: "s", Namespace: "inari-e2e-agent", Key: "client-secret"},
+	}
+	if err := r.persistCredentials(context.Background(), creds); err != nil {
+		t.Fatalf("persistCredentials: %v", err)
+	}
+	if _, err := r.Kube.CoreV1().ConfigMaps("inari-e2e-agent").Get(context.Background(), registrationConfigMap, metav1.GetOptions{}); err != nil {
+		t.Fatalf("ConfigMap not in pod namespace: %v", err)
+	}
+	if _, err := r.Kube.CoreV1().ConfigMaps("inari-system").Get(context.Background(), registrationConfigMap, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("ConfigMap must NOT be in inari-system, got err=%v", err)
+	}
+	loaded, err := r.loadPersistedCredentials(context.Background())
+	if err != nil || loaded == nil {
+		t.Fatalf("loadPersistedCredentials: %v, nil=%v", err, loaded == nil)
+	}
+	if loaded.ClusterID != "cluster-1" {
+		t.Errorf("ClusterID = %q, want cluster-1", loaded.ClusterID)
+	}
+}
+
+func TestSystemNamespaceFieldBeatsEnv(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "from-env")
+	r := &AgentReconciler{Log: logr.Discard(), SystemNamespace: "explicit"}
+	if got := r.systemNamespace(); got != "explicit" {
+		t.Errorf("systemNamespace() = %q, want explicit", got)
+	}
+	r2 := &AgentReconciler{Log: logr.Discard()}
+	if got := r2.systemNamespace(); got != "from-env" {
+		t.Errorf("systemNamespace() = %q, want from-env", got)
+	}
 }
