@@ -19,7 +19,7 @@ jobs:
           # Pinned: the action's `latest` resolves to the v1.x line (built
           # with an older Go), which cannot parse modules targeting go1.26.3.
           # golangci-lint v2 requires golangci-lint-action v7.
-          version: v2.14.0
+          version: v2.15.0
 
   test:
     runs-on: ubuntu-latest
@@ -55,9 +55,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5
         with:
-          version: v4.3.1
+          version: v4.3.2
       - name: Install helm-unittest
         run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false --version v1.1.2
       - run: helm lint charts/inari-agent

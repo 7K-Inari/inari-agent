@@ -1,4 +1,4 @@
-FROM golang:1.27@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8 AS builder
+FROM golang:1.27@sha256:ec47ea3725fea0cc88f6de94919aef19f40f12fc1ec0e2d1b3426dbf15ecca04 AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG VERSION=dev
@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -a -ldflags "-s -w -X main.version=${VERSION}" -o inari-tunnel-agent ./cmd/inari-tunnel-agent
 
-FROM gcr.io/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+FROM gcr.io/distroless/static:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 WORKDIR /
 COPY --from=builder /workspace/manager .
 COPY --from=builder /workspace/inari-tunnel-agent .
