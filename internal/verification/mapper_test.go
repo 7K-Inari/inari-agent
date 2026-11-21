@@ -78,6 +78,11 @@ func TestMapWorkflowFailsClosed(t *testing.T) {
 			params[0].(map[string]any)["value"] = strings.Repeat("x", 65537)
 			_ = metav1.SetNestedSlice(u.Object, params, "status", "outputs", "parameters")
 		}},
+		{name: "duplicate outcome", mutate: func(u *metav1.Unstructured) {
+			params, _, _ := metav1.NestedSlice(u.Object, "status", "outputs", "parameters")
+			params = append(params, map[string]any{"name": verification.OutcomeParameterName, "value": `{"schema":"inari.verification.outcome/v1","result":"failed"}`})
+			_ = metav1.SetNestedSlice(u.Object, params, "status", "outputs", "parameters")
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

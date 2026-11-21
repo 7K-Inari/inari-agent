@@ -217,18 +217,27 @@ func workflowOutcome(obj *unstructured.Unstructured) (string, error) {
 	if err != nil || !found {
 		return "", err
 	}
+	outcomeFound := false
+	outcomeValue := ""
 	for _, item := range parameters {
 		parameter, _ := item.(map[string]any)
 		if parameter["name"] != OutcomeParameterName {
 			continue
 		}
-		value, _ := parameter["value"].(string)
+		if outcomeFound {
+			return "", errors.New("duplicate verification outcome parameters are ambiguous")
+		}
+		outcomeFound = true
+		value, ok := parameter["value"].(string)
+		if !ok {
+			return "", errors.New("verification outcome value must be a string")
+		}
 		if len(value) > maxOutcomeBytes {
 			return "", errors.New("verification outcome exceeds 65536 bytes")
 		}
-		return value, nil
+		outcomeValue = value
 	}
-	return "", nil
+	return outcomeValue, nil
 }
 
 func boundedMessage(value string, maxRunes int) string {
