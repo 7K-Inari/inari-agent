@@ -46,6 +46,12 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list"]
+  # Optional Argo Workflows verification execution reports. This is a
+  # deliberately read-only rule; suites and the agent receive no Workflow,
+  # pod/log, secret, or suite-registry mutation credentials.
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows"]
+    verbs: ["get", "list", "watch"]
   # ArgoCD Applications: status streamer (app health/sync reporting),
   # invoke-action ownership checks (inari.dev/managed-by label), and
   # register-argocd-app command handling (create/update/delete of

@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	connectrpc.com/connect/v2 v2.0.2
-	github.com/7K-Inari/inari-api v0.7.0-d1dc5a2.0.20261026085445-0464651127cd
+	github.com/7K-Inari/inari-api v0.8.0-b5e7e0b.0.20261121015609-4971e59ac41e
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-logr/logr v1.4.4
@@ -78,7 +78,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect

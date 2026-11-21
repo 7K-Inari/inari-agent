@@ -18,6 +18,7 @@ import (
 	"github.com/7K-Inari/inari-agent/internal/git"
 	"github.com/7K-Inari/inari-agent/internal/render"
 	"github.com/7K-Inari/inari-agent/internal/status"
+	agentverification "github.com/7K-Inari/inari-agent/internal/verification"
 )
 
 // GitOpsConfig carries the M2 GitOps dependencies: rendered manifests go
@@ -167,6 +168,16 @@ func (c *GitOpsConfig) streamer(log logr.Logger, dyn dynamic.Interface, sender s
 		s.Discovery = c.Kube.Discovery()
 	}
 	return s
+}
+
+// verificationWatcher builds the optional Argo Workflows observer. It remains
+// read-only and discovery-aware when the addon CRD is absent.
+func (c *GitOpsConfig) verificationWatcher(log logr.Logger, dyn dynamic.Interface, sender agentverification.Sender) *agentverification.Watcher {
+	watcher := agentverification.NewWatcher(log.WithName("verification"), dyn, sender)
+	if c.Kube != nil {
+		watcher.Discovery = c.Kube.Discovery()
+	}
+	return watcher
 }
 
 // addonScanner builds the addon discovery scanner (Feature C, plan §6):
