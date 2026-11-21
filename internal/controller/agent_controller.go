@@ -32,6 +32,7 @@ import (
 	"github.com/7K-Inari/inari-agent/internal/registration"
 	"github.com/7K-Inari/inari-agent/internal/status"
 	"github.com/7K-Inari/inari-agent/internal/stream"
+	agentverification "github.com/7K-Inari/inari-agent/internal/verification"
 )
 
 // AgentReconciler is the agent lifecycle Runnable. With no Registrar or no
@@ -138,6 +139,7 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 
 	var streamer *status.Streamer
 	var scanner *addonscan.Scanner
+	var verificationWatcher *agentverification.Watcher
 	if r.GitOps != nil {
 		var redeemer command.UserCredentialRedeemer
 		if r.NewRedeemer != nil {
@@ -149,6 +151,7 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 		}
 		streamer = r.GitOps.streamer(r.Log, r.Dynamic, client)
 		scanner = r.GitOps.addonScanner(r.Meta, client)
+		verificationWatcher = r.GitOps.verificationWatcher(r.Log, r.Dynamic, client)
 	}
 
 	// Fail closed until the stream is actually up: gate command handling on
@@ -196,6 +199,17 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 			}
 		}
 	}
+	if verificationWatcher != nil {
+		prev := onConnectedChange
+		onConnectedChange = func(v bool) {
+			if prev != nil {
+				prev(v)
+			}
+			if v {
+				verificationWatcher.Reset()
+			}
+		}
+	}
 	if onConnectedChange != nil {
 		if tracker, ok := client.(interface{ SetOnConnectedChange(func(bool)) }); ok {
 			tracker.SetOnConnectedChange(onConnectedChange)
@@ -205,7 +219,7 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	log.Info("agent registered and connecting",
 		"tenant", creds.TenantID, "cluster", creds.ClusterID, "controlPlane", creds.ControlPlane)
 
-	errCh := make(chan error, 4)
+	errCh := make(chan error, 5)
 	go func() { errCh <- client.Run(ctx) }()
 	go func() { errCh <- aggregator.Run(ctx) }()
 	if streamer != nil {
@@ -213,6 +227,9 @@ func (r *AgentReconciler) Start(ctx context.Context) error {
 	}
 	if scanner != nil {
 		go func() { errCh <- scanner.Run(ctx) }()
+	}
+	if verificationWatcher != nil {
+		go func() { errCh <- verificationWatcher.Run(ctx) }()
 	}
 
 	for {

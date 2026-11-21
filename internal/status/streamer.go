@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -312,14 +313,40 @@ func mapStatus(u *unstructured.Unstructured, kind string) (*agentv1.StatusUpdate
 		}
 	}
 	key := fmt.Sprintf("%s/%s/%s/%s", kind, u.GetNamespace(), u.GetName(), u.GetUID())
-	return &agentv1.StatusUpdate{
+	update := &agentv1.StatusUpdate{
 		Resource:      ref,
 		Health:        health,
 		Sync:          sync,
 		Message:       msg,
 		ObservedAt:    timestamppb.Now(),
 		StateChecksum: "",
-	}, key
+	}
+	if u.GetKind() == "Application" {
+		update.ObservedRevision, update.SyncOperationId, update.SyncOperationPhase, update.OperationFinishedAt = applicationRevisionIdentity(u)
+	}
+	return update, key
+}
+
+// applicationRevisionIdentity binds health/sync to the deployed source
+// revision and one deterministic ArgoCD operation. ArgoCD does not expose an
+// operation UUID on every version, so the fallback hashes immutable operation
+// timestamps, revision, phase, and retry count.
+func applicationRevisionIdentity(u *unstructured.Unstructured) (revision, operationID, phase string, finished *timestamppb.Timestamp) {
+	revision, _, _ = unstructured.NestedString(u.Object, "status", "sync", "revision")
+	phase, _, _ = unstructured.NestedString(u.Object, "status", "operationState", "phase")
+	operationID, _, _ = unstructured.NestedString(u.Object, "status", "operationState", "operation", "id")
+	startedAt, _, _ := unstructured.NestedString(u.Object, "status", "operationState", "startedAt")
+	finishedAt, _, _ := unstructured.NestedString(u.Object, "status", "operationState", "finishedAt")
+	operationState, _, _ := unstructured.NestedMap(u.Object, "status", "operationState")
+	retryCount := fmt.Sprint(operationState["retryCount"])
+	if parsed, err := time.Parse(time.RFC3339, finishedAt); err == nil && finishedAt != "" {
+		finished = timestamppb.New(parsed.UTC())
+	}
+	if operationID == "" && phase != "" && (startedAt != "" || finishedAt != "") {
+		sum := sha256.Sum256([]byte(strings.Join([]string{startedAt, finishedAt, revision, phase, retryCount}, "\x00")))
+		operationID = "op-" + hex.EncodeToString(sum[:8])
+	}
+	return revision, operationID, phase, finished
 }
 
 // comparisonErrorOf extracts the first error-type condition message
@@ -420,5 +447,10 @@ func checksum(u *agentv1.StatusUpdate) string {
 	h.Write([]byte(u.Resource.Kind + u.Resource.Namespace + u.Resource.Name))
 	h.Write([]byte{0})
 	h.Write([]byte(u.Health.String() + u.Sync.String() + u.Message))
+	h.Write([]byte{0})
+	h.Write([]byte(u.ObservedRevision + u.SyncOperationId + u.SyncOperationPhase))
+	if u.OperationFinishedAt != nil {
+		h.Write([]byte(fmt.Sprintf("%d", u.OperationFinishedAt.GetSeconds())))
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
