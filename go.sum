@@ -6,6 +6,8 @@ github.com/7K-Inari/inari-api v0.7.0-d1dc5a2.0.20261026085445-0464651127cd h1:1J
 github.com/7K-Inari/inari-api v0.7.0-d1dc5a2.0.20261026085445-0464651127cd/go.mod h1:aw9KMDPoyyby13ekXJNgSp20Mo+3cekKBio15soDIy0=
 github.com/7K-Inari/inari-api v0.8.0-b5e7e0b.0.20261121000357-14c302a03a71 h1:MOEaimkGRtYAbtSWB0JDXSkkX7Nl5kgJ4y474+lJDE8=
 github.com/7K-Inari/inari-api v0.8.0-b5e7e0b.0.20261121000357-14c302a03a71/go.mod h1:gQA00slDZZakEdxsCMWTSQSFhBdA0dRXKhPH10QO0WM=
+github.com/7K-Inari/inari-api v0.8.0-b5e7e0b.0.20261121015609-4971e59ac41e h1:crLgOkKisY2I80VnqbcHoqUZL/hrQbOS+rHnCKT8Bmc=
+github.com/7K-Inari/inari-api v0.8.0-b5e7e0b.0.20261121015609-4971e59ac41e/go.mod h1:gQA00slDZZakEdxsCMWTSQSFhBdA0dRXKhPH10QO0WM=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/Masterminds/semver/v3 v3.5.0 h1:kQceYJfbupGfZOKZQg0kou0DgAKhzDg2NZPAwZ/2OOE=
