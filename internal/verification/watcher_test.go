@@ -71,6 +71,12 @@ func TestWatcherDedupeResetAndSendFailure(t *testing.T) {
 	if err := sender.events[sender.count()-1].Payload.UnmarshalTo(&report); err != nil || !report.Deleted {
 		t.Fatalf("delete report = %#v, %v", &report, err)
 	}
+	watcher.mu.Lock()
+	_, retained := watcher.lastSum[string(obj.GetUID())]
+	watcher.mu.Unlock()
+	if retained {
+		t.Fatal("deleted Workflow retained dedupe state")
+	}
 
 	failed := &watcherSender{err: errors.New("disconnected")}
 	retryWatcher := NewWatcher(logr.Discard(), nil, failed)

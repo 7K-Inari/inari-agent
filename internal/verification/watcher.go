@@ -166,6 +166,10 @@ func (w *Watcher) emit(ctx context.Context, obj any, deleted bool) {
 		return
 	}
 	w.mu.Lock()
-	w.lastSum[key] = checksum
+	if deleted {
+		delete(w.lastSum, key)
+	} else {
+		w.lastSum[key] = checksum
+	}
 	w.mu.Unlock()
 }
