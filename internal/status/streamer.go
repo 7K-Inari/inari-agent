@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -450,7 +451,7 @@ func checksum(u *agentv1.StatusUpdate) string {
 	h.Write([]byte{0})
 	h.Write([]byte(u.ObservedRevision + u.SyncOperationId + u.SyncOperationPhase))
 	if u.OperationFinishedAt != nil {
-		h.Write([]byte(fmt.Sprintf("%d", u.OperationFinishedAt.GetSeconds())))
+		h.Write([]byte(strconv.FormatInt(u.OperationFinishedAt.GetSeconds(), 10)))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

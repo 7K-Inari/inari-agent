@@ -69,7 +69,7 @@ func TestWatcherDedupeResetAndSendFailure(t *testing.T) {
 	watcher.emit(context.Background(), obj, true)
 	var report agentv1.VerificationReport
 	if err := sender.events[sender.count()-1].Payload.UnmarshalTo(&report); err != nil || !report.Deleted {
-		t.Fatalf("delete report = %#v, %v", report, err)
+		t.Fatalf("delete report = %#v, %v", &report, err)
 	}
 
 	failed := &watcherSender{err: errors.New("disconnected")}

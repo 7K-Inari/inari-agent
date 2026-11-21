@@ -52,10 +52,10 @@ var reportDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // MapWorkflow maps one owned Workflow without interpreting application checks.
 func MapWorkflow(obj *unstructured.Unstructured, now time.Time) (*agentv1.VerificationReport, error) {
 	if obj == nil || obj.GetKind() != "Workflow" || obj.GetAPIVersion() != "argoproj.io/v1alpha1" || obj.GetLabels()[LabelVerification] != "true" {
-		return nil, errors.New("Workflow is not an Inari verification execution")
+		return nil, errors.New("workflow is not an Inari verification execution")
 	}
 	if obj.GetName() == "" || obj.GetNamespace() == "" || obj.GetUID() == "" || obj.GetResourceVersion() == "" {
-		return nil, errors.New("Workflow identity or resourceVersion is incomplete")
+		return nil, errors.New("workflow identity or resourceVersion is incomplete")
 	}
 	a := obj.GetAnnotations()
 	required := []string{AnnotationAttempt, AnnotationSuiteDigest, AnnotationProfile, AnnotationRenderFingerprint,
@@ -207,7 +207,7 @@ func workflowTimestamp(obj *unstructured.Unstructured, field string) (*timestamp
 	}
 	parsed, err := time.Parse(time.RFC3339, value)
 	if err != nil {
-		return nil, fmt.Errorf("Workflow %s: %w", field, err)
+		return nil, fmt.Errorf("workflow %s: %w", field, err)
 	}
 	return timestamppb.New(parsed.UTC()), nil
 }

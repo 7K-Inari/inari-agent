@@ -132,9 +132,9 @@ func (w *Watcher) emit(ctx context.Context, obj any, deleted bool) {
 		return
 	}
 	report.Deleted = deleted
-	checksumReport := *report
+	checksumReport := proto.Clone(report).(*agentv1.VerificationReport)
 	checksumReport.ObservedAt = nil // observation time is transport metadata, not content.
-	raw, err := (proto.MarshalOptions{Deterministic: true}).Marshal(&checksumReport)
+	raw, err := (proto.MarshalOptions{Deterministic: true}).Marshal(checksumReport)
 	if err != nil {
 		w.Log.Error(err, "verification: marshal report checksum")
 		return
