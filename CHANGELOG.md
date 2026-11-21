@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/7K-Inari/inari-agent/compare/v0.6.0...v0.7.0) (2026-11-21)
+
+
+### Features
+
+* report labeled verification workflows ([06b3b8b](https://github.com/7K-Inari/inari-agent/commit/06b3b8bf676751bab577c2b846b158cda23c44a3))
+* **verification:** report labeled workflows over agent stream ([52d56c8](https://github.com/7K-Inari/inari-agent/commit/52d56c8d34ada2565a26c1acc96ce0c39d586d83))
+
+
+### Bug Fixes
+
+* **verification:** ignore observation time in reconnect report hashing ([2052c39](https://github.com/7K-Inari/inari-agent/commit/2052c39397138b4dff45bf710f63a51c11fc6b8a))
+* **verification:** satisfy agent lint checks ([acbed1d](https://github.com/7K-Inari/inari-agent/commit/acbed1d27501ff8ca39c84d7c166138bc51e313e))
+
 ## [0.6.0](https://github.com/7K-Inari/inari-agent/compare/v0.5.1...v0.6.0) (2026-11-14)
 
 
