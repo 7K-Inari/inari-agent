@@ -248,9 +248,26 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+type lockedLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func TestDesiredAgentVersionMismatchLogsWarning(t *testing.T) {
 	gw := &fakeGateway{desiredVersion: "0.5.1"}
-	var logBuf bytes.Buffer
+	var logBuf lockedLogBuffer
 	c := newTestClient(t, gw, func(c *ConnectClient) {
 		c.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 	})
@@ -268,7 +285,7 @@ func TestDesiredAgentVersionMismatchLogsWarning(t *testing.T) {
 
 func TestDesiredAgentVersionMatchLogsNoWarning(t *testing.T) {
 	gw := &fakeGateway{desiredVersion: "0.1.0-test"} // matches newTestClient's AgentVersion
-	var logBuf bytes.Buffer
+	var logBuf lockedLogBuffer
 	c := newTestClient(t, gw, func(c *ConnectClient) {
 		c.Logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 	})
