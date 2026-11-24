@@ -165,7 +165,12 @@ func TestStreamerConfiguredWatchesEnvtest(t *testing.T) {
 	sctx, cancel := context.WithCancel(ctx)
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.Run(sctx) }()
-	t.Cleanup(func() { cancel(); <-errCh })
+	t.Cleanup(func() {
+		cancel()
+		if err := <-errCh; err != nil {
+			t.Errorf("run: %v", err)
+		}
+	})
 
 	collect := func(n int, d time.Duration) []*agentv1.StatusUpdate {
 		t.Helper()

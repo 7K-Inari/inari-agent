@@ -315,7 +315,9 @@ func TestResetReEmitsSnapshot(t *testing.T) {
 	go func() { errCh <- s.Run(ctx) }()
 	defer func() {
 		cancel()
-		<-errCh
+		if err := <-errCh; err != nil {
+			t.Errorf("run: %v", err)
+		}
 	}()
 
 	waitEvents := func(n int) {
@@ -373,7 +375,12 @@ func TestStreamerNativeClusterIssuerQualifiedKind(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.Run(ctx) }()
-	t.Cleanup(func() { cancel(); <-errCh })
+	t.Cleanup(func() {
+		cancel()
+		if err := <-errCh; err != nil {
+			t.Errorf("run: %v", err)
+		}
+	})
 
 	select {
 	case <-sender.signal:
@@ -449,7 +456,12 @@ func TestDuplicateGVRAcrossInstanceGVRsAndWatches(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.Run(ctx) }()
-	t.Cleanup(func() { cancel(); <-errCh })
+	t.Cleanup(func() {
+		cancel()
+		if err := <-errCh; err != nil {
+			t.Errorf("run: %v", err)
+		}
+	})
 
 	select {
 	case <-sender.signal:
