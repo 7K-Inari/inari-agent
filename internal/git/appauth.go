@@ -5,7 +5,9 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,7 +44,8 @@ func ParseAppCredentials(data map[string][]byte) (AppCredentials, error) {
 // appTokenSource vends installation access tokens, minting short-lived
 // app JWTs and caching the installation token until near expiry.
 type appTokenSource struct {
-	creds AppCredentials
+	creds     AppCredentials
+	apiOrigin *url.URL
 	// newToken exchanges an app JWT for an installation token; injectable
 	// for tests. Returns the token and its expiry.
 	newToken func(ctx context.Context, appJWT string) (string, time.Time, error)
@@ -94,12 +97,41 @@ type tokenTransport struct {
 }
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set("Accept", "application/vnd.github+json")
+	if !sameOrigin(req.URL, t.src.apiOrigin) {
+		clone.Header.Del("Authorization")
+		return t.base.RoundTrip(clone)
+	}
 	tok, err := t.src.Token(req.Context())
 	if err != nil {
 		return nil, err
 	}
-	clone := req.Clone(req.Context())
 	clone.Header.Set("Authorization", "Bearer "+tok)
-	clone.Header.Set("Accept", "application/vnd.github+json")
 	return t.base.RoundTrip(clone)
+}
+
+// sameOrigin mirrors the credential-origin rule used by go-github: scheme,
+// hostname, and the effective port must all match before credentials are sent.
+func sameOrigin(u, origin *url.URL) bool {
+	if u == nil || origin == nil {
+		return false
+	}
+	return strings.EqualFold(u.Scheme, origin.Scheme) &&
+		strings.EqualFold(u.Hostname(), origin.Hostname()) &&
+		effectivePort(u) == effectivePort(origin)
+}
+
+func effectivePort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
