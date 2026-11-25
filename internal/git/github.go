@@ -16,13 +16,17 @@ import (
 // installation. apiBase may be empty for github.com (tests pass an
 // httptest URL).
 func NewGitHubProvider(creds AppCredentials, apiBase string) (Provider, error) {
-	src := &appTokenSource{creds: creds}
+	apiOrigin, err := parseGitHubOrigin(apiBase)
+	if err != nil {
+		return nil, err
+	}
+	src := &appTokenSource{creds: creds, apiOrigin: apiOrigin}
 	gh, err := newClient(&http.Client{Transport: src.RoundTripper(nil)}, apiBase)
 	if err != nil {
 		return nil, err
 	}
 	src.newToken = func(ctx context.Context, appJWT string) (string, time.Time, error) {
-		appClient, err := newClient(&http.Client{Transport: &jwtTransport{jwt: appJWT}}, apiBase)
+		appClient, err := newClient(&http.Client{Transport: &jwtTransport{jwt: appJWT, apiOrigin: src.apiOrigin}}, apiBase)
 		if err != nil {
 			return "", time.Time{}, err
 		}
@@ -35,13 +39,25 @@ func NewGitHubProvider(creds AppCredentials, apiBase string) (Provider, error) {
 	return &gitHubProvider{gh: gh}, nil
 }
 
+func parseGitHubOrigin(apiBase string) (*url.URL, error) {
+	raw := apiBase
+	if raw == "" {
+		raw = "https://api.github.com"
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("git: bad API base %q: %w", apiBase, err)
+	}
+	return u, nil
+}
+
 // newClient builds a client, pointed at apiBase when non-empty (tests).
 func newClient(httpClient *http.Client, apiBase string) (*github.Client, error) {
 	opts := []github.ClientOptionsFunc{github.WithHTTPClient(httpClient)}
 	if apiBase != "" {
-		u, err := url.Parse(apiBase)
+		u, err := parseGitHubOrigin(apiBase)
 		if err != nil {
-			return nil, fmt.Errorf("git: bad API base %q: %w", apiBase, err)
+			return nil, err
 		}
 		if !strings.HasSuffix(u.Path, "/") {
 			u.Path += "/"
@@ -52,11 +68,17 @@ func newClient(httpClient *http.Client, apiBase string) (*github.Client, error) 
 	return github.NewClient(opts...)
 }
 
-type jwtTransport struct{ jwt string }
+type jwtTransport struct {
+	jwt       string
+	apiOrigin *url.URL
+}
 
 func (t *jwtTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	clone := req.Clone(req.Context())
-	clone.Header.Set("Authorization", "Bearer "+t.jwt)
+	clone.Header.Del("Authorization")
+	if sameOrigin(req.URL, t.apiOrigin) {
+		clone.Header.Set("Authorization", "Bearer "+t.jwt)
+	}
 	clone.Header.Set("Accept", "application/vnd.github+json")
 	return http.DefaultTransport.RoundTrip(clone)
 }
